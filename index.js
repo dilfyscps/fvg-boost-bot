@@ -1,4 +1,6 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 
 const {
   Client,
@@ -22,6 +24,9 @@ const BOOSTER_ROLE_IDS = [
   '1509166982656950292',
 ];
 
+const BOOST_LOG_CHANNEL_ID = 'PUT_BOOST_LOG_CHANNEL_ID_HERE';
+const BOOST_DATA_FILE = path.join(__dirname, 'boosts.json');
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -35,6 +40,8 @@ const client = new Client({
 
 const verificationChannels = new Map();
 const pendingVerifications = new Set();
+
+let boostData = loadBoostData();
 
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
@@ -51,6 +58,7 @@ client.once('ready', () => {
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
+  await handleBoostSystemMessage(message);
 
   // DM verification flow
   if (message.channel.type === 1) {
@@ -181,6 +189,14 @@ client.on('messageCreate', async (message) => {
     await sendCustomAnnouncement(message);
     return;
   }
+  if (command === `${PREFIX}boostcount`) {
+    await sendBoostCount(message);
+    return;
+  }
+  if (command === `${PREFIX}testboostdm`) {
+  await sendTestBoostDM(message);
+  return;
+}
 
   if (
     message.channel.parentId === VERIFY_CATEGORY_ID &&
@@ -281,7 +297,9 @@ async function sendHelpEmbed(message) {
       { name: `${PREFIX}say #channel message`, value: 'Staff only. Makes the bot send a normal message.', inline: false },
       { name: `${PREFIX}userinfo @user`, value: 'Shows basic user info.', inline: false },
       { name: `${PREFIX}ping`, value: 'Checks if the bot is online.', inline: false },
-      { name: `${PREFIX}announce #channel content | description | image/gif url | button label | button url`, value: 'Staff only. Sends a custom announcement with an optional image/GIF and button.', inline: false }
+      { name: `${PREFIX}boostcount @user`, value: 'Staff only. Shows the tracked boost count for a user.', inline: false },
+  { name: `${PREFIX}testboostdm @user`, value: 'Staff only. Sends the boost verification DM for testing.', inline: false },
+  { name: `${PREFIX}announce #channel content | description | image/gif url | button label | button url`, value: 'Staff only. Sends a custom announcement with an optional image/GIF and button.', inline: false }
     )
     .setColor(0xff7aa8)
     .setTimestamp();
@@ -449,4 +467,131 @@ async function sendCustomAnnouncement(message) {
   }
 }
 
+function loadBoostData() {
+  try {
+    if (!fs.existsSync(BOOST_DATA_FILE)) {
+      fs.writeFileSync(BOOST_DATA_FILE, JSON.stringify({}, null, 2));
+    }
+
+    return JSON.parse(fs.readFileSync(BOOST_DATA_FILE, 'utf8'));
+  } catch (err) {
+    console.error('Failed to load boost data:', err);
+    return {};
+  }
+}
+
+function saveBoostData() {
+  try {
+    fs.writeFileSync(BOOST_DATA_FILE, JSON.stringify(boostData, null, 2));
+  } catch (err) {
+    console.error('Failed to save boost data:', err);
+  }
+}
+
+async function handleBoostSystemMessage(message) {
+  if (!message.guild) return;
+
+  const systemTypes = [8, 9, 10, 11];
+
+  if (!systemTypes.includes(message.type)) return;
+  if (!message.author) return;
+
+  const userId = message.author.id;
+  const currentBoosts = boostData[userId]?.boosts || 0;
+  const newBoosts = currentBoosts + 1;
+
+  boostData[userId] = {
+    boosts: newBoosts,
+    username: message.author.tag,
+    lastBoostedAt: new Date().toISOString(),
+  };
+
+  saveBoostData();
+
+  await sendBoostLog(message, newBoosts);
+
+  if (newBoosts >= 2) {
+    await remindUserToVerify(message.author, newBoosts);
+  }
+}
+
+async function sendBoostLog(message, boostCount) {
+  try {
+    const channel = await message.guild.channels.fetch(BOOST_LOG_CHANNEL_ID).catch(() => null);
+
+    if (!channel) return;
+
+    const embed = new EmbedBuilder()
+      .setTitle('Boost Logged')
+      .setDescription(`${message.author} boosted the server.`)
+      .addFields(
+        { name: 'User', value: `${message.author.tag}`, inline: true },
+        { name: 'Tracked Boosts', value: `${boostCount}`, inline: true }
+      )
+      .setColor(0xff7aa8)
+      .setTimestamp();
+
+    await channel.send({ embeds: [embed] });
+  } catch (err) {
+    console.error('Failed to send boost log:', err);
+  }
+}
+
+async function remindUserToVerify(user, boostCount) {
+  try {
+    await user.send(`Thank you for boosting FVGNATION ${boostCount} times. You may qualify for 2x booster perks. Send \`${PREFIX}verifyboost\` here to start verification.`);
+  } catch (err) {
+    console.error(`Could not DM ${user.tag} about boost verification.`);
+  }
+}
+
+async function sendBoostCount(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const target = message.mentions.users.first();
+
+  if (!target) {
+    await message.reply(`Use: \`${PREFIX}boostcount @user\``);
+    return;
+  }
+
+  const data = boostData[target.id];
+  const count = data?.boosts || 0;
+
+  const embed = new EmbedBuilder()
+    .setTitle('Tracked Boost Count')
+    .setDescription(`${target} has **${count}** tracked boost message(s).`)
+    .setColor(0xff7aa8)
+    .setTimestamp();
+
+  await message.channel.send({ embeds: [embed] });
+}
+
 client.login(process.env.TOKEN);
+
+async function sendTestBoostDM(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const target = message.mentions.users.first();
+
+  if (!target) {
+    await message.reply(`Use: \`${PREFIX}testboostdm @user\``);
+    return;
+  }
+
+  try {
+    await target.send(
+      `♡ thank you for boosting FVGNATION 2 times. You may qualify for 2x booster perks. Send \`${PREFIX}verifyboost\` here to start verification.`
+    );
+
+    await message.reply(`✅ Test boost DM sent to ${target.tag}.`);
+  } catch (err) {
+    await message.reply('❌ Failed to send DM. They probably have DMs disabled.');
+  }
+}
