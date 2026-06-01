@@ -18,13 +18,25 @@ const PREFIX = '.';
 const GUILD_ID = '1503876779369173263';
 const STAFF_ROLE_ID = '1508178939489685624';
 const VERIFY_CATEGORY_ID = '1510877767229767845';
+const MOD_APP_CATEGORY_ID = '1510921080267866142';
+const MOD_APP_LOG_CHANNEL_ID = null;
+
+const MOD_APPLICATION_QUESTIONS = [
+  'What is your Discord username and age?',
+  'What timezone are you in?',
+  'Why do you want to be a moderator for FVGNATION?',
+  'Do you have any past moderation experience? If yes, explain.',
+  'How active can you be each day?',
+  'How would you handle someone breaking the rules?',
+  'Anything else staff should know?',
+];
 
 const BOOSTER_ROLE_IDS = [
   '1509295991906369658',
   '1509166982656950292',
 ];
 
-const BOOST_LOG_CHANNEL_ID = '1510913269211205785';
+const BOOST_LOG_CHANNEL_ID = '1510874261575700501';
 const BOOST_DATA_FILE = path.join(__dirname, 'boosts.json');
 
 const client = new Client({
@@ -40,6 +52,8 @@ const client = new Client({
 
 const verificationChannels = new Map();
 const pendingVerifications = new Set();
+const modApplications = new Map();
+const modApplicationChannels = new Map();
 
 let boostData = loadBoostData();
 
@@ -60,9 +74,29 @@ client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   await handleBoostSystemMessage(message);
 
-  // DM verification flow
+  // DM verification + mod application flow
   if (message.channel.type === 1) {
     const dmContent = message.content.trim().toLowerCase();
+
+    if (dmContent === `${PREFIX}modapply`) {
+      if (modApplications.has(message.author.id)) {
+        await message.reply('♡ you already have a mod application in progress. please answer the current question.');
+        return;
+      }
+
+      modApplications.set(message.author.id, {
+        step: 0,
+        answers: [],
+      });
+
+      await message.reply(`♡ mod application started!\n\n**Question 1/${MOD_APPLICATION_QUESTIONS.length}:** ${MOD_APPLICATION_QUESTIONS[0]}`);
+      return;
+    }
+
+    if (modApplications.has(message.author.id)) {
+      await handleModApplicationAnswer(message);
+      return;
+    }
 
     if (dmContent === `${PREFIX}verifyboost`) {
       pendingVerifications.add(message.author.id);
@@ -151,7 +185,7 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
-    await message.reply(`♡ hi! to verify your boosts, send \`${PREFIX}verifyboost\` first.`);
+    await message.reply(`♡ hi! send \`${PREFIX}verifyboost\` to verify boosts or \`${PREFIX}modapply\` to apply for mod.`);
     return;
   }
 
@@ -189,14 +223,59 @@ client.on('messageCreate', async (message) => {
     await sendCustomAnnouncement(message);
     return;
   }
+
   if (command === `${PREFIX}boostcount`) {
     await sendBoostCount(message);
     return;
   }
+
   if (command === `${PREFIX}testboostdm`) {
-  await sendTestBoostDM(message);
-  return;
-}
+    await sendTestBoostDM(message);
+    return;
+  }
+
+  if (
+    message.channel.parentId === MOD_APP_CATEGORY_ID &&
+    message.member.roles.cache.has(STAFF_ROLE_ID)
+  ) {
+    if (command === `${PREFIX}acceptmod`) {
+      const userId = message.channel.topic || null;
+
+      if (!userId) {
+        await message.reply('Could not determine which user this application belongs to.');
+        return;
+      }
+
+      const member = await message.guild.members.fetch(userId).catch(() => null);
+
+      if (member) {
+        await member.send('♡ your FVGNATION mod application has been accepted! staff will contact you soon.').catch(() => null);
+      }
+
+      modApplicationChannels.delete(userId);
+      await message.channel.send(`✅ <@${userId}>'s mod application has been accepted.`);
+      return;
+    }
+
+    if (command === `${PREFIX}denymod`) {
+      const userId = message.channel.topic || null;
+
+      if (!userId) {
+        await message.reply('Could not determine which user this application belongs to.');
+        return;
+      }
+
+      const member = await message.guild.members.fetch(userId).catch(() => null);
+
+      if (member) {
+        await member.send('♡ your FVGNATION mod application has been denied. thank you for applying.').catch(() => null);
+      }
+
+      modApplicationChannels.delete(userId);
+      await message.channel.send(`❌ <@${userId}>'s mod application has been denied.`);
+      return;
+    }
+  }
 
   if (
     message.channel.parentId === VERIFY_CATEGORY_ID &&
@@ -290,16 +369,19 @@ async function sendHelpEmbed(message) {
     .setDescription('Here are the commands I can use right now.')
     .addFields(
       { name: `${PREFIX}verifyboost`, value: 'DM only. Starts 2x boost verification.', inline: false },
+      { name: `${PREFIX}modapply`, value: 'DM only. Starts a moderator application.', inline: false },
       { name: `${PREFIX}approve`, value: 'Staff only. Approves a boost verification inside a verify channel.', inline: false },
       { name: `${PREFIX}deny`, value: 'Staff only. Denies a boost verification inside a verify channel.', inline: false },
       { name: `${PREFIX}close`, value: 'Staff only. Closes a verification channel.', inline: false },
+      { name: `${PREFIX}acceptmod`, value: 'Staff only. Accepts a mod application inside an application channel.', inline: false },
+      { name: `${PREFIX}denymod`, value: 'Staff only. Denies a mod application inside an application channel.', inline: false },
       { name: `${PREFIX}embed #channel Title | Description`, value: 'Staff only. Sends a custom embed.', inline: false },
       { name: `${PREFIX}say #channel message`, value: 'Staff only. Makes the bot send a normal message.', inline: false },
       { name: `${PREFIX}userinfo @user`, value: 'Shows basic user info.', inline: false },
       { name: `${PREFIX}ping`, value: 'Checks if the bot is online.', inline: false },
       { name: `${PREFIX}boostcount @user`, value: 'Staff only. Shows the tracked boost count for a user.', inline: false },
-  { name: `${PREFIX}testboostdm @user`, value: 'Staff only. Sends the boost verification DM for testing.', inline: false },
-  { name: `${PREFIX}announce #channel content | description | image/gif url | button label | button url`, value: 'Staff only. Sends a custom announcement with an optional image/GIF and button.', inline: false }
+      { name: `${PREFIX}testboostdm @user`, value: 'Staff only. Sends the boost verification DM for testing.', inline: false },
+      { name: `${PREFIX}announce #channel content | description | image/gif url | button label | button url`, value: 'Staff only. Sends a custom announcement with an optional image/GIF and button.', inline: false }
     )
     .setColor(0xff7aa8)
     .setTimestamp();
@@ -467,6 +549,111 @@ async function sendCustomAnnouncement(message) {
   }
 }
 
+async function handleModApplicationAnswer(message) {
+  const application = modApplications.get(message.author.id);
+
+  if (!application) return;
+
+  const answer = message.content.trim();
+
+  if (!answer) {
+    await message.reply('♡ please type an answer for this question.');
+    return;
+  }
+
+  application.answers.push(answer);
+  application.step += 1;
+
+  if (application.step < MOD_APPLICATION_QUESTIONS.length) {
+    modApplications.set(message.author.id, application);
+    await message.reply(`♡ saved!\n\n**Question ${application.step + 1}/${MOD_APPLICATION_QUESTIONS.length}:** ${MOD_APPLICATION_QUESTIONS[application.step]}`);
+    return;
+  }
+
+  modApplications.delete(message.author.id);
+
+  try {
+    const guild = await client.guilds.fetch(GUILD_ID);
+    const member = await guild.members.fetch(message.author.id).catch(() => null);
+
+    if (!member) {
+      await message.reply('You are not a member of the server.');
+      return;
+    }
+
+    if (modApplicationChannels.has(message.author.id)) {
+      await message.reply('♡ you already have an open mod application. staff will review it soon.');
+      return;
+    }
+
+    const channelName = `mod-app-${message.author.username}`
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '')
+      .slice(0, 90);
+
+    const channel = await guild.channels.create({
+      name: channelName,
+      type: ChannelType.GuildText,
+      parent: MOD_APP_CATEGORY_ID,
+      topic: message.author.id,
+      permissionOverwrites: [
+        {
+          id: guild.roles.everyone.id,
+          deny: [PermissionsBitField.Flags.ViewChannel],
+        },
+        {
+          id: STAFF_ROLE_ID,
+          allow: [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages,
+            PermissionsBitField.Flags.ReadMessageHistory,
+          ],
+        },
+        {
+          id: client.user.id,
+          allow: [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages,
+            PermissionsBitField.Flags.ReadMessageHistory,
+            PermissionsBitField.Flags.ManageChannels,
+          ],
+        },
+      ],
+    });
+
+    modApplicationChannels.set(message.author.id, channel.id);
+
+    const formattedAnswers = MOD_APPLICATION_QUESTIONS.map((question, index) => {
+      return `**${index + 1}. ${question}**\n${application.answers[index] || 'No answer'}`;
+    }).join('\n\n');
+
+    const embed = new EmbedBuilder()
+      .setTitle('New Mod Application')
+      .setDescription(`Applicant: <@${message.author.id}> (\`${message.author.id}\`)\n\n${formattedAnswers}\n\nUse \`${PREFIX}acceptmod\` or \`${PREFIX}denymod\`.`)
+      .setColor(0xff7aa8)
+      .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
+      .setTimestamp();
+
+    await channel.send({
+      content: `<@&${STAFF_ROLE_ID}> New mod application!`,
+      embeds: [embed],
+    });
+
+    if (MOD_APP_LOG_CHANNEL_ID) {
+      const logChannel = await guild.channels.fetch(MOD_APP_LOG_CHANNEL_ID).catch(() => null);
+
+      if (logChannel && logChannel.id !== channel.id) {
+        await logChannel.send(`♡ new mod application from <@${message.author.id}>: ${channel}`);
+      }
+    }
+
+    await message.reply('♡ your mod application has been submitted. staff will review it soon!');
+  } catch (err) {
+    console.error('Failed to submit mod application:', err);
+    await message.reply('Something went wrong while submitting your mod application. Please contact staff.');
+  }
+}
+
 function loadBoostData() {
   try {
     if (!fs.existsSync(BOOST_DATA_FILE)) {
@@ -569,7 +756,6 @@ async function sendBoostCount(message) {
 
   await message.channel.send({ embeds: [embed] });
 }
-
 
 async function sendTestBoostDM(message) {
   if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
