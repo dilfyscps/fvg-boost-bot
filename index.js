@@ -1271,6 +1271,8 @@ async function sendTweetPost(message) {
   const displayUsername = tweetDetails?.username || tweetInfo.username || 'twitter';
   const description = cleanTweetText(optionalText || tweetDetails?.text || '');
   const media = tweetDetails?.media || {};
+  console.log('TWEET DETAILS:', JSON.stringify(tweetDetails, null, 2));
+  console.log('TWEET MEDIA:', media);
 
   const embed = new EmbedBuilder()
     .setAuthor({ name: `@${displayUsername}` })
@@ -1308,10 +1310,27 @@ async function sendTweetPost(message) {
 
   const row = new ActionRowBuilder().addComponents(buttons);
 
-  await targetChannel.send({
+  const payload = {
     embeds: [embed],
     components: [row],
-  });
+  };
+
+  if (media.videoUrl) {
+    payload.files = [
+      {
+        attachment: media.videoUrl,
+        name: 'tweet-video.mp4',
+      },
+    ];
+  }
+
+  try {
+    await targetChannel.send(payload);
+  } catch (err) {
+    logger.warn('Failed to attach tweet video, sending embed without video file', err);
+    delete payload.files;
+    await targetChannel.send(payload);
+  }
 
   if (targetChannel.id !== message.channel.id) {
     await message.reply(`✅ Tweet embed sent to ${targetChannel}.`);
@@ -1338,6 +1357,29 @@ function parseTweetUrl(url) {
 }
 
 async function fetchTweetDetails(statusId) {
+  const fxResponse = await fetch(`https://api.fxtwitter.com/status/${statusId}`, {
+    headers: {
+      'User-Agent': 'fvgify-discord-bot/1.0',
+      Accept: 'application/json',
+    },
+  }).catch(err => {
+    logger.warn('FxTwitter request failed before response', err);
+    return null;
+  });
+
+  if (fxResponse && fxResponse.ok) {
+    const fxData = await fxResponse.json();
+    const tweet = fxData.tweet || fxData;
+    const media = extractFxTweetMedia(tweet);
+
+    return {
+      text: tweet.text || '',
+      username: tweet.author?.screen_name || tweet.author?.name || null,
+      createdAt: tweet.created_at || (tweet.created_timestamp ? new Date(tweet.created_timestamp * 1000).toISOString() : null),
+      media,
+    };
+  }
+
   const response = await fetch(`https://cdn.syndication.twimg.com/tweet-result?id=${statusId}&lang=en`, {
     headers: {
       'User-Agent': 'Mozilla/5.0',
@@ -1360,46 +1402,18 @@ async function fetchTweetDetails(statusId) {
   };
 }
 
-function extractTweetMedia(tweetData) {
-  const mediaItems = [
-    ...(Array.isArray(tweetData.mediaDetails) ? tweetData.mediaDetails : []),
-    ...(Array.isArray(tweetData.photos) ? tweetData.photos : []),
-    ...(Array.isArray(tweetData.extended_entities?.media) ? tweetData.extended_entities.media : []),
-    ...(Array.isArray(tweetData.entities?.media) ? tweetData.entities.media : []),
-  ];
+function extractFxTweetMedia(tweet) {
+  const media = tweet.media || {};
+  const videos = Array.isArray(media.videos) ? media.videos : [];
+  const photos = Array.isArray(media.photos) ? media.photos : [];
 
-  const result = {
-    imageUrl: null,
-    videoUrl: null,
+  const firstVideo = videos.find(video => video.url);
+  const firstPhoto = photos.find(photo => photo.url);
+
+  return {
+    imageUrl: firstVideo?.thumbnail_url || firstPhoto?.url || null,
+    videoUrl: firstVideo?.url || null,
   };
-
-  for (const item of mediaItems) {
-    const type = item.type || item.media_type;
-    const imageUrl = item.media_url_https || item.media_url || item.url || item.image_url || item.thumbnail_url;
-
-    if (!result.imageUrl && imageUrl && (type === 'photo' || imageUrl.includes('twimg.com') || imageUrl.startsWith('http'))) {
-      result.imageUrl = imageUrl;
-    }
-
-    const variants = item.video_info?.variants || item.video_variants || item.variants || [];
-    const mp4Variants = variants
-      .filter(variant => variant.url && (!variant.content_type || variant.content_type === 'video/mp4'))
-      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-
-    if (!result.videoUrl && mp4Variants[0]?.url) {
-      result.videoUrl = mp4Variants[0].url;
-    }
-
-    if (!result.imageUrl && item.video_info && imageUrl) {
-      result.imageUrl = imageUrl;
-    }
-  }
-
-  if (!result.imageUrl && Array.isArray(tweetData.photos) && tweetData.photos[0]?.url) {
-    result.imageUrl = tweetData.photos[0].url;
-  }
-
-  return result;
 }
 
 async function sendSayMessage(message) {
