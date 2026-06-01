@@ -1,7 +1,8 @@
-require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-
+const config = require('./config');
+const storage = require('./storage');
+const logger = require('./logger');
 const {
   Client,
   GatewayIntentBits,
@@ -14,12 +15,17 @@ const {
   ButtonStyle,
 } = require('discord.js');
 
-const PREFIX = '.';
-const GUILD_ID = '1503876779369173263';
-const STAFF_ROLE_ID = '1508178939489685624';
-const VERIFY_CATEGORY_ID = '1510877767229767845';
-const MOD_APP_CATEGORY_ID = '1510921080267866142';
-const MOD_APP_LOG_CHANNEL_ID = null;
+const {
+  PREFIX,
+  GUILD_ID,
+  STAFF_ROLE_ID,
+  VERIFY_CATEGORY_ID,
+  MOD_APP_CATEGORY_ID,
+  MOD_APP_LOG_CHANNEL_ID,
+  BOOSTER_ROLE_IDS,
+  BOOST_LOG_CHANNEL_ID,
+  BOOST_DATA_FILE,
+} = config;
 
 const MOD_APPLICATION_QUESTIONS = [
   'What is your Discord username and age?',
@@ -31,13 +37,7 @@ const MOD_APPLICATION_QUESTIONS = [
   'Anything else staff should know?',
 ];
 
-const BOOSTER_ROLE_IDS = [
-  '1509295991906369658',
-  '1509166982656950292',
-];
-
-const BOOST_LOG_CHANNEL_ID = '1510874261575700501';
-const BOOST_DATA_FILE = path.join(__dirname, 'boosts.json');
+// BOOSTER_ROLE_IDS, BOOST_LOG_CHANNEL_ID and BOOST_DATA_FILE come from config
 
 const client = new Client({
   intents: [
@@ -55,19 +55,23 @@ const pendingVerifications = new Set();
 const modApplications = new Map();
 const modApplicationChannels = new Map();
 
-let boostData = loadBoostData();
+let boostData = storage.loadBoostData(BOOST_DATA_FILE);
 
 client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
+  logger.info(`Logged in as ${client.user.tag}`);
 
-  client.user.setPresence({
-    activities: [
-      {
-        name: 'discord.gg/fvgnation ♡',
-      },
-    ],
-    status: 'online',
-  });
+  try {
+    client.user.setPresence({
+      activities: [
+        {
+          name: 'discord.gg/fvgnation ♡',
+        },
+      ],
+      status: 'online',
+    });
+  } catch (err) {
+    logger.warn('Failed to set presence', err);
+  }
 });
 
 client.on('messageCreate', async (message) => {
@@ -173,7 +177,7 @@ client.on('messageCreate', async (message) => {
 
         await message.reply('♡ your boost verification request has been submitted. staff will review it soon.');
       } catch (err) {
-        console.error('Failed to create verification channel:', err);
+        logger.error('Failed to create verification channel:', err);
         await message.reply('Something went wrong while creating your verification request. Please contact staff.');
       }
 
@@ -233,6 +237,95 @@ client.on('messageCreate', async (message) => {
     await sendTestBoostDM(message);
     return;
   }
+
+  if (command === `${PREFIX}addboost`) {
+    const hasStaffRole = message.member.roles.cache.has(STAFF_ROLE_ID);
+    const hasManage = message.member.permissions?.has(PermissionsBitField.Flags.ManageGuild) || message.member.permissions?.has(PermissionsBitField.Flags.Administrator);
+
+    if (!hasStaffRole && !hasManage) {
+      await message.reply('You do not have permission to use this command.');
+      return;
+    }
+
+    const target = message.mentions.users.first();
+    const amount = parseInt(args[2], 10);
+
+    if (!target || !Number.isInteger(amount) || amount < 0) {
+      await message.reply(`Use: \`${PREFIX}addboost @user amount\``);
+      return;
+    }
+
+    boostData[target.id] = {
+      ...(boostData[target.id] || {}),
+      boosts: amount,
+      verifiedBoosts: amount,
+      verified: amount > 0,
+      username: target.tag,
+      verifiedAt: new Date().toISOString(),
+      verifiedBy: message.author.id,
+      lostBoostAlerted: false,
+    };
+
+    storage.saveBoostData(BOOST_DATA_FILE, boostData);
+
+    logger.info(`addboost: ${message.author.tag} set ${target.tag} -> ${amount}`);
+    await message.reply(`✅ Set ${target.tag}'s verified boost count to **${amount}**.`);
+    return;
+  }
+
+  if (command === `${PREFIX}modpending`) {
+  await message.reply(`📋 Open mod applications: ${modApplicationChannels.size}`);
+  return;
+}
+
+if (command === `${PREFIX}modstats`) {
+  const embed = new EmbedBuilder()
+    .setTitle('Mod Application Stats')
+    .addFields(
+      { name: 'Open Applications', value: `${modApplicationChannels.size}`, inline: true },
+      { name: 'Applications In Progress', value: `${modApplications.size}`, inline: true }
+    )
+    .setColor(0xff7aa8);
+
+  await message.channel.send({ embeds: [embed] });
+  return;
+}
+
+if (command === `${PREFIX}closemod`) {
+  const userId = message.channel.topic || null;
+
+  if (userId) {
+    modApplicationChannels.delete(userId);
+  }
+
+  await message.channel.send('🔒 Mod application channel will be deleted in 5 seconds...');
+
+  setTimeout(() => {
+    message.channel.delete('Mod application closed').catch(() => null);
+  }, 5000);
+
+  return;
+}
+
+if (command === `${PREFIX}note`) {
+  const note = message.content.slice(`${PREFIX}note`.length).trim();
+
+  if (!note) {
+    await message.reply(`Use: \`${PREFIX}note your note here\``);
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('Staff Note')
+    .setDescription(note)
+    .setFooter({ text: `Added by ${message.author.tag}` })
+    .setColor(0xff7aa8)
+    .setTimestamp();
+
+  await message.channel.send({ embeds: [embed] });
+
+  return;
+}
 
   if (
     message.channel.parentId === MOD_APP_CATEGORY_ID &&
@@ -311,6 +404,21 @@ client.on('messageCreate', async (message) => {
         }
       }
 
+      // Update tracked boost count on approval
+      try {
+        const userIdStr = member.id;
+        const current = boostData[userIdStr]?.boosts || 0;
+        boostData[userIdStr] = {
+          boosts: Math.max(current, 2),
+          username: member.user.tag,
+          lastBoostedAt: new Date().toISOString(),
+        };
+
+        storage.saveBoostData(BOOST_DATA_FILE, boostData);
+      } catch (err) {
+        logger.error('Failed to update boostData on approval', err);
+      }
+
       await message.channel.send(`✅ <@${userId}> has been approved and given the booster roles.`);
       await member.send('Your boost verification has been approved and you have been given the booster roles!').catch(() => null);
       return;
@@ -364,29 +472,96 @@ client.on('messageCreate', async (message) => {
 });
 
 async function sendHelpEmbed(message) {
-  const embed = new EmbedBuilder()
-    .setTitle('FVGNATION Bot Commands')
-    .setDescription('Here are the commands I can use right now.')
-    .addFields(
-      { name: `${PREFIX}verifyboost`, value: 'DM only. Starts 2x boost verification.', inline: false },
-      { name: `${PREFIX}modapply`, value: 'DM only. Starts a moderator application.', inline: false },
-      { name: `${PREFIX}approve`, value: 'Staff only. Approves a boost verification inside a verify channel.', inline: false },
-      { name: `${PREFIX}deny`, value: 'Staff only. Denies a boost verification inside a verify channel.', inline: false },
-      { name: `${PREFIX}close`, value: 'Staff only. Closes a verification channel.', inline: false },
-      { name: `${PREFIX}acceptmod`, value: 'Staff only. Accepts a mod application inside an application channel.', inline: false },
-      { name: `${PREFIX}denymod`, value: 'Staff only. Denies a mod application inside an application channel.', inline: false },
-      { name: `${PREFIX}embed #channel Title | Description`, value: 'Staff only. Sends a custom embed.', inline: false },
-      { name: `${PREFIX}say #channel message`, value: 'Staff only. Makes the bot send a normal message.', inline: false },
-      { name: `${PREFIX}userinfo @user`, value: 'Shows basic user info.', inline: false },
-      { name: `${PREFIX}ping`, value: 'Checks if the bot is online.', inline: false },
-      { name: `${PREFIX}boostcount @user`, value: 'Staff only. Shows the tracked boost count for a user.', inline: false },
-      { name: `${PREFIX}testboostdm @user`, value: 'Staff only. Sends the boost verification DM for testing.', inline: false },
-      { name: `${PREFIX}announce #channel content | description | image/gif url | button label | button url`, value: 'Staff only. Sends a custom announcement with an optional image/GIF and button.', inline: false }
-    )
+  const isStaff = message.member && message.member.roles && message.member.roles.cache.has(STAFF_ROLE_ID);
+
+  const pages = [
+    {
+      id: 'general',
+      title: 'General',
+      body: `\`${PREFIX}help\` — Show this help message\n\`${PREFIX}ping\` — Check if the bot is online\n\`${PREFIX}userinfo @user\` — Show basic user info`,
+    },
+    {
+      id: 'boosting',
+      title: 'Boosting',
+      body: `\`${PREFIX}verifyboost\` (DM) — Start 2x boost verification flow\n\`${PREFIX}boostcount @user\` — Show tracked boosts for a user\n\`${PREFIX}testboostdm @user\` — (Staff) Send test verification DM`,
+    },
+    {
+      id: 'moderation',
+      title: 'Moderator Applications',
+      body: `\`${PREFIX}modapply\` (DM) — Start a moderator application\n\`${PREFIX}modpending\` — (Staff) View open mod applications\n\`${PREFIX}modstats\` — (Staff) Mod application stats\n\`${PREFIX}acceptmod\` / \`${PREFIX}denymod\` — (Staff) Accept or deny an application\n\`${PREFIX}closemod\` — (Staff) Close a mod application channel`,
+    },
+    {
+      id: 'staff',
+      title: 'Staff Tools',
+      body: `\`${PREFIX}approve\` / \`${PREFIX}deny\` — (Staff) Approve/deny a verification channel\n\`${PREFIX}close\` — (Staff) Close a verification channel\n\`${PREFIX}note your note\` — (Staff) Add a note to the channel\n\`${PREFIX}say #channel message\` — (Staff) Make the bot send a message\n\`${PREFIX}embed #channel Title | Description\` — (Staff) Send a custom embed\n\`${PREFIX}announce #channel content | description | image/gif url | button label | button url\` — (Staff) Send an announcement with optional image/button`,
+    },
+  ];
+
+  const buildEmbed = (page) => new EmbedBuilder()
+    .setTitle(`FVGNATION Bot — ${page.title}`)
+    .setDescription(page.body)
     .setColor(0xff7aa8)
     .setTimestamp();
 
-  await message.channel.send({ embeds: [embed] });
+  const buttons = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('help_general').setLabel('General').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('help_boosting').setLabel('Boosting').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('help_mod').setLabel('Mod Apps').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('help_staff').setLabel('Staff').setStyle(ButtonStyle.Danger).setDisabled(!isStaff),
+    new ButtonBuilder().setCustomId('help_close').setLabel('Close').setStyle(ButtonStyle.Secondary),
+  );
+
+  const initial = pages[0];
+  const helpMessage = await message.channel.send({ embeds: [buildEmbed(initial)], components: [buttons] });
+
+  const filter = (i) => i.user.id === message.author.id;
+  const collector = helpMessage.createMessageComponentCollector({ filter, time: 120000 });
+
+  collector.on('collect', async (interaction) => {
+    try {
+      if (interaction.user.id !== message.author.id) {
+        await interaction.reply({ content: 'You cannot control this help menu.', ephemeral: true });
+        return;
+      }
+
+      if (interaction.customId === 'help_close') {
+        const disabledRow = ActionRowBuilder.from(buttons);
+        disabledRow.components.forEach(c => c.setDisabled(true));
+        await interaction.update({ components: [disabledRow], embeds: [buildEmbed(initial)] });
+        collector.stop('closed');
+        return;
+      }
+
+      let pageKey = 'general';
+
+      if (interaction.customId === 'help_general') pageKey = 'general';
+      if (interaction.customId === 'help_boosting') pageKey = 'boosting';
+      if (interaction.customId === 'help_mod') pageKey = 'moderation';
+      if (interaction.customId === 'help_staff') pageKey = 'staff';
+
+      const page = pages.find(p => p.id === pageKey) || pages[0];
+
+      // If staff page requested but user is not staff, inform them
+      if (page.id === 'staff' && !isStaff) {
+        await interaction.reply({ content: 'Staff tools are only visible to staff members.', ephemeral: true });
+        return;
+      }
+
+      await interaction.update({ embeds: [buildEmbed(page)], components: [buttons] });
+    } catch (err) {
+      logger.error('Help menu interaction error', err);
+    }
+  });
+
+  collector.on('end', async () => {
+    try {
+      const disabledRow = ActionRowBuilder.from(buttons);
+      disabledRow.components.forEach(c => c.setDisabled(true));
+      await helpMessage.edit({ components: [disabledRow] }).catch(() => null);
+    } catch (err) {
+      // ignore
+    }
+  });
 }
 
 async function sendUserInfo(message) {
@@ -649,31 +824,12 @@ async function handleModApplicationAnswer(message) {
 
     await message.reply('♡ your mod application has been submitted. staff will review it soon!');
   } catch (err) {
-    console.error('Failed to submit mod application:', err);
+    logger.error('Failed to submit mod application:', err);
     await message.reply('Something went wrong while submitting your mod application. Please contact staff.');
   }
 }
 
-function loadBoostData() {
-  try {
-    if (!fs.existsSync(BOOST_DATA_FILE)) {
-      fs.writeFileSync(BOOST_DATA_FILE, JSON.stringify({}, null, 2));
-    }
-
-    return JSON.parse(fs.readFileSync(BOOST_DATA_FILE, 'utf8'));
-  } catch (err) {
-    console.error('Failed to load boost data:', err);
-    return {};
-  }
-}
-
-function saveBoostData() {
-  try {
-    fs.writeFileSync(BOOST_DATA_FILE, JSON.stringify(boostData, null, 2));
-  } catch (err) {
-    console.error('Failed to save boost data:', err);
-  }
-}
+// boost data load/save moved to storage.js
 
 async function handleBoostSystemMessage(message) {
   if (!message.guild) return;
@@ -693,7 +849,7 @@ async function handleBoostSystemMessage(message) {
     lastBoostedAt: new Date().toISOString(),
   };
 
-  saveBoostData();
+  storage.saveBoostData(BOOST_DATA_FILE, boostData);
 
   await sendBoostLog(message, newBoosts);
 
@@ -720,7 +876,7 @@ async function sendBoostLog(message, boostCount) {
 
     await channel.send({ embeds: [embed] });
   } catch (err) {
-    console.error('Failed to send boost log:', err);
+    logger.error('Failed to send boost log:', err);
   }
 }
 
@@ -728,7 +884,7 @@ async function remindUserToVerify(user, boostCount) {
   try {
     await user.send(`Thank you for boosting FVGNATION ${boostCount} times. You may qualify for 2x booster perks. Send \`${PREFIX}verifyboost\` here to start verification.`);
   } catch (err) {
-    console.error(`Could not DM ${user.tag} about boost verification.`);
+    logger.error(`Could not DM ${user.tag} about boost verification.`);
   }
 }
 
