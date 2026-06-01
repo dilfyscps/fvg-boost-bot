@@ -7,12 +7,15 @@ let supabase = {
   isSupabaseConfigured: () => false,
   loadBoosterList: async () => [],
   saveBoosterList: async () => ({ count: 0 }),
+  loadStickyMessages: async () => ({}),
+  saveStickyMessage: async () => ({ saved: false, reason: 'Supabase module fallback is active. Check supabase.js load error in logs.' }),
+  deleteStickyMessage: async () => ({ deleted: false, reason: 'Supabase module fallback is active. Check supabase.js load error in logs.' }),
 };
 
 try {
   supabase = require('./supabase');
 } catch (err) {
-  logger.warn('Supabase module could not be loaded. Booster data will use local JSON only.', err);
+  logger.error(`Supabase module could not be loaded: ${err.message}`, err);
 }
 const {
   Client,
