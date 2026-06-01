@@ -27,6 +27,7 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ActivityType,
 } = require('discord.js');
 
 const {
@@ -108,7 +109,8 @@ client.once('ready', async () => {
     client.user.setPresence({
       activities: [
         {
-          name: 'discord.gg/fvgnation ♡',
+          name: 'FVGNATION Radio ♡',
+          type: ActivityType.Listening,
         },
       ],
       status: 'online',
