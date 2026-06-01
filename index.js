@@ -109,8 +109,8 @@ client.once('ready', async () => {
     client.user.setPresence({
       activities: [
         {
-          name: 'FVGNATION Radio ♡',
-          type: ActivityType.Listening,
+          name: 'discord.gg/fvgnation',
+          type: ActivityType.Watching,
         },
       ],
       status: 'online',
