@@ -1245,17 +1245,12 @@ async function sendTweetPost(message) {
   const tweetUrlMatch = content.match(/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/[^\s]+/i);
 
   if (!mentionedChannel || !tweetUrlMatch) {
-    await message.reply(`Use: \`${PREFIX}tweetpost #channel tweetLink optional text\``);
+    await message.reply(`Use: \`${PREFIX}tweetpost #channel tweetLink\``);
     return;
   }
 
   const tweetUrl = normalizeTweetUrl(tweetUrlMatch[0]);
   const targetChannel = mentionedChannel;
-  const optionalText = content
-    .replace(`<#${mentionedChannel.id}>`, '')
-    .replace(tweetUrlMatch[0], '')
-    .trim();
-
   const tweetInfo = parseTweetUrl(tweetUrl);
 
   if (!tweetInfo.statusId) {
@@ -1268,72 +1263,30 @@ async function sendTweetPost(message) {
     return null;
   });
 
-  const displayUsername = tweetDetails?.username || tweetInfo.username || 'twitter';
-  const description = cleanTweetText(optionalText || tweetDetails?.text || '');
   const media = tweetDetails?.media || {};
   console.log('TWEET DETAILS:', JSON.stringify(tweetDetails, null, 2));
   console.log('TWEET MEDIA:', media);
 
-  const embed = new EmbedBuilder()
-    .setAuthor({ name: `@${displayUsername}` })
-    .setColor(0xff7aa8)
-    .setTimestamp(tweetDetails?.createdAt ? new Date(tweetDetails.createdAt) : new Date());
+  const fileUrl = media.videoUrl || media.imageUrl;
 
-  if (description) {
-    embed.setDescription(description);
-  }
-
-  if (media.imageUrl) {
-    embed.setImage(media.imageUrl);
-  }
-
-  if (!description && !media.imageUrl && !media.videoUrl) {
-    await message.reply('I could not extract text, image, or video from that tweet. Try another tweet link or add text after the link.');
+  if (!fileUrl) {
+    await message.reply('I could not extract an image or video file from that tweet.');
     return;
   }
 
-  const buttons = [
-    new ButtonBuilder()
-      .setLabel('View Post')
-      .setStyle(ButtonStyle.Link)
-      .setURL(tweetUrl),
-  ];
+  const fileName = media.videoUrl ? 'tweet-video.mp4' : 'tweet-image.jpg';
 
-  if (media.videoUrl) {
-    buttons.push(
-      new ButtonBuilder()
-        .setLabel('View Video')
-        .setStyle(ButtonStyle.Link)
-        .setURL(media.videoUrl)
-    );
-  }
-
-  const row = new ActionRowBuilder().addComponents(buttons);
-
-  const payload = {
-    embeds: [embed],
-    components: [row],
-  };
-
-  if (media.videoUrl) {
-    payload.files = [
+  await targetChannel.send({
+    files: [
       {
-        attachment: media.videoUrl,
-        name: 'tweet-video.mp4',
+        attachment: fileUrl,
+        name: fileName,
       },
-    ];
-  }
-
-  try {
-    await targetChannel.send(payload);
-  } catch (err) {
-    logger.warn('Failed to attach tweet video, sending embed without video file', err);
-    delete payload.files;
-    await targetChannel.send(payload);
-  }
+    ],
+  });
 
   if (targetChannel.id !== message.channel.id) {
-    await message.reply(`✅ Tweet embed sent to ${targetChannel}.`);
+    await message.reply(`✅ Tweet media sent to ${targetChannel}.`);
   } else {
     await message.react('✅').catch(() => null);
   }
@@ -1855,28 +1808,39 @@ async function checkTwitterFeeds(options = {}) {
 
       if (!channel || !channel.isTextBased()) continue;
 
-      const embed = new EmbedBuilder()
-        .setAuthor({ name: `@${feed.username}` })
-        .setTitle('New X/Twitter Post')
-        .setDescription(cleanTweetText(newestPost.title || newestPost.description || 'New post'))
-        .setColor(0xff7aa8)
-        .setTimestamp(newestPost.pubDate ? new Date(newestPost.pubDate) : new Date())
-        .setFooter({ text: 'Posted from RSS.app' });
+      const normalizedLink = normalizeTweetUrl(newestPost.link);
+      const tweetInfo = parseTweetUrl(normalizedLink);
+      const tweetDetails = tweetInfo.statusId ? await fetchTweetDetails(tweetInfo.statusId).catch(err => {
+        logger.warn(`Failed to fetch tweet details for RSS feed @${feed.username}`, err);
+        return null;
+      }) : null;
 
-      if (newestPost.imageUrl) {
-        embed.setImage(newestPost.imageUrl);
+      const media = tweetDetails?.media || {
+        imageUrl: newestPost.imageUrl,
+        videoUrl: null,
+      };
+
+      const fileUrl = media.videoUrl || media.imageUrl;
+
+      if (!fileUrl) {
+        logger.warn(`No media file found for RSS feed @${feed.username}: ${newestPost.link}`);
+        feed.lastPostLink = newestPost.link;
+        feed.lastSeenTitle = newestPost.title || null;
+        feed.lastCheckedAt = new Date().toISOString();
+        feed.updatedAt = new Date().toISOString();
+        saveTwitterFeeds();
+        continue;
       }
 
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setLabel('View Post')
-          .setStyle(ButtonStyle.Link)
-          .setURL(newestPost.link)
-      );
+      const fileName = media.videoUrl ? 'tweet-video.mp4' : 'tweet-image.jpg';
 
       await channel.send({
-        embeds: [embed],
-        components: [row],
+        files: [
+          {
+            attachment: fileUrl,
+            name: fileName,
+          },
+        ],
       });
 
       feed.lastPostLink = newestPost.link;
