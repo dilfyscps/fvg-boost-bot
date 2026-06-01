@@ -297,6 +297,67 @@ client.on('messageCreate', async (message) => {
     await purgeMessages(message, args);
     return;
   }
+
+  if (command === `${PREFIX}timeout`) {
+    await timeoutUser(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}untimeout`) {
+    await untimeoutUser(message);
+    return;
+  }
+
+  if (command === `${PREFIX}lock`) {
+    await lockChannel(message);
+    return;
+  }
+
+  if (command === `${PREFIX}unlock`) {
+    await unlockChannel(message);
+    return;
+  }
+
+  if (command === `${PREFIX}serverstats`) {
+    await sendServerStats(message);
+    return;
+  }
+
+  if (command === `${PREFIX}avatar`) {
+    await sendAvatar(message);
+    return;
+  }
+
+  if (command === `${PREFIX}kick`) {
+    await kickUser(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}ban`) {
+    await banUser(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}unban`) {
+    await unbanUser(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}purgeuser`) {
+    await purgeUserMessages(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}role`) {
+    await addRoleToUser(message);
+    return;
+  }
+
+  if (command === `${PREFIX}removerole`) {
+    await removeRoleFromUser(message);
+    return;
+  }
+
   if (command === `${PREFIX}warn`) {
     await warnUser(message);
     return;
@@ -532,7 +593,27 @@ async function sendHelpEmbed(message) {
     {
       id: 'staff',
       title: 'Staff Tools',
-      body: `\`${PREFIX}approve\` / \`${PREFIX}deny\` — (Staff) Approve/deny a verification channel\n\`${PREFIX}purge amount\` — (Staff) Delete recent messages\n\`${PREFIX}warn @user reason\` — (Staff) Warn a user\n\`${PREFIX}warnings @user\` — View a user's warnings\n\`${PREFIX}clearwarns @user\` — (Staff) Clear a user's warnings\n\`${PREFIX}close\` — (Staff) Close a verification channel\n\`${PREFIX}note your note\` — (Staff) Add a note to the channel\n\`${PREFIX}say #channel message\` — (Staff) Make the bot send a message\n\`${PREFIX}embed #channel Title | Description\` — (Staff) Send a custom embed\n\`${PREFIX}announce #channel content | description | image/gif url | button label | button url\` — (Staff) Send an announcement with optional image/button`,
+      body: `\`${PREFIX}approve\` / \`${PREFIX}deny\` — (Staff) Approve/deny a verification channel
+\`${PREFIX}purge amount\` — (Staff) Delete recent messages
+\`${PREFIX}timeout @user 1h reason\` — (Staff) Timeout a user
+\`${PREFIX}untimeout @user\` — (Staff) Remove a timeout
+\`${PREFIX}lock\` / \`${PREFIX}unlock\` — (Staff) Lock or unlock a channel
+\`${PREFIX}serverstats\` — View server statistics
+\`${PREFIX}avatar @user\` — View a user's avatar
+\`${PREFIX}kick @user reason\` — (Staff) Kick a user
+\`${PREFIX}ban @user reason\` — (Staff) Ban a user
+\`${PREFIX}unban userID reason\` — (Staff) Unban a user by ID
+\`${PREFIX}purgeuser @user amount\` — (Staff) Delete a user's recent messages
+\`${PREFIX}role @user @role\` — (Staff) Give a user a role
+\`${PREFIX}removerole @user @role\` — (Staff) Remove a role from a user
+\`${PREFIX}warn @user reason\` — (Staff) Warn a user
+\`${PREFIX}warnings @user\` — View a user's warnings
+\`${PREFIX}clearwarns @user\` — (Staff) Clear a user's warnings
+\`${PREFIX}close\` — (Staff) Close a verification channel
+\`${PREFIX}note your note\` — (Staff) Add a note to the channel
+\`${PREFIX}say #channel message\` — (Staff) Make the bot send a message
+\`${PREFIX}embed #channel Title | Description\` — (Staff) Send a custom embed
+\`${PREFIX}announce #channel content | description | image/gif url | button label | button url\` — (Staff) Send an announcement with optional image/button`,
     },
   ];
 
@@ -648,6 +729,260 @@ async function purgeMessages(message, args) {
     logger.error('Failed to purge messages', err);
     await message.channel.send('❌ Could not purge messages. Messages older than 14 days cannot be bulk deleted.');
   }
+}
+
+async function timeoutUser(message, args) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) return;
+
+  const target = message.mentions.members.first();
+  if (!target) {
+    await message.reply(`Use: \`${PREFIX}timeout @user 1h reason\``);
+    return;
+  }
+
+  const durationText = args[2];
+  if (!durationText) return message.reply('Provide a duration like 10m, 1h, or 1d.');
+
+  let duration = 0;
+  if (durationText.endsWith('m')) duration = parseInt(durationText) * 60000;
+  if (durationText.endsWith('h')) duration = parseInt(durationText) * 3600000;
+  if (durationText.endsWith('d')) duration = parseInt(durationText) * 86400000;
+
+  if (!duration || duration < 1000) return message.reply('Invalid duration.');
+
+  const reason = args.slice(3).join(' ') || 'No reason provided';
+
+  await target.timeout(duration, reason);
+  await message.channel.send(`⏳ ${target} has been timed out for **${durationText}**.`);
+}
+
+async function untimeoutUser(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) return;
+
+  const target = message.mentions.members.first();
+  if (!target) return message.reply(`Use: \`${PREFIX}untimeout @user\``);
+
+  await target.timeout(null);
+  await message.channel.send(`✅ Removed timeout from ${target}.`);
+}
+
+async function lockChannel(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) return;
+
+  await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, {
+    SendMessages: false,
+  });
+
+  await message.channel.send('🔒 Channel locked.');
+}
+
+async function unlockChannel(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) return;
+
+  await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, {
+    SendMessages: null,
+  });
+
+  await message.channel.send('🔓 Channel unlocked.');
+}
+
+async function sendServerStats(message) {
+  const guild = message.guild;
+
+  const embed = new EmbedBuilder()
+    .setTitle('Server Statistics')
+    .addFields(
+      { name: 'Members', value: `${guild.memberCount}`, inline: true },
+      { name: 'Channels', value: `${guild.channels.cache.size}`, inline: true },
+      { name: 'Roles', value: `${guild.roles.cache.size}`, inline: true }
+    )
+    .setColor(0xff7aa8)
+    .setTimestamp();
+
+  await message.channel.send({ embeds: [embed] });
+}
+
+async function sendAvatar(message) {
+  const target = message.mentions.users.first() || message.author;
+
+  const embed = new EmbedBuilder()
+    .setTitle(`${target.username}'s Avatar`)
+    .setImage(target.displayAvatarURL({ size: 4096 }))
+    .setColor(0xff7aa8);
+
+  await message.channel.send({ embeds: [embed] });
+}
+
+function isStaffModerator(message, permissionFlag) {
+  const hasStaffRole = message.member.roles.cache.has(STAFF_ROLE_ID);
+  const hasPermission = permissionFlag
+    ? message.member.permissions?.has(permissionFlag) || message.member.permissions?.has(PermissionsBitField.Flags.Administrator)
+    : false;
+
+  return hasStaffRole || hasPermission;
+}
+
+async function kickUser(message, args) {
+  if (!isStaffModerator(message, PermissionsBitField.Flags.KickMembers)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const target = message.mentions.members.first();
+
+  if (!target) {
+    await message.reply(`Use: \`${PREFIX}kick @user reason\``);
+    return;
+  }
+
+  if (!target.kickable) {
+    await message.reply('I cannot kick this user. Check my role position and permissions.');
+    return;
+  }
+
+  const reason = args.slice(2).join(' ') || 'No reason provided';
+
+  await target.kick(reason);
+  await message.channel.send(`👢 Kicked **${target.user.tag}**. Reason: ${reason}`);
+}
+
+async function banUser(message, args) {
+  if (!isStaffModerator(message, PermissionsBitField.Flags.BanMembers)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const target = message.mentions.members.first();
+
+  if (!target) {
+    await message.reply(`Use: \`${PREFIX}ban @user reason\``);
+    return;
+  }
+
+  if (!target.bannable) {
+    await message.reply('I cannot ban this user. Check my role position and permissions.');
+    return;
+  }
+
+  const reason = args.slice(2).join(' ') || 'No reason provided';
+
+  await target.ban({ reason });
+  await message.channel.send(`🔨 Banned **${target.user.tag}**. Reason: ${reason}`);
+}
+
+async function unbanUser(message, args) {
+  if (!isStaffModerator(message, PermissionsBitField.Flags.BanMembers)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const userId = args[1];
+
+  if (!userId) {
+    await message.reply(`Use: \`${PREFIX}unban userID reason\``);
+    return;
+  }
+
+  const reason = args.slice(2).join(' ') || 'No reason provided';
+
+  try {
+    await message.guild.members.unban(userId, reason);
+    await message.channel.send(`✅ Unbanned **${userId}**. Reason: ${reason}`);
+  } catch (err) {
+    logger.error('Failed to unban user', err);
+    await message.reply('Could not unban that user. Make sure the ID is correct and they are banned.');
+  }
+}
+
+async function purgeUserMessages(message, args) {
+  if (!isStaffModerator(message, PermissionsBitField.Flags.ManageMessages)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const target = message.mentions.users.first();
+  const amount = parseInt(args[2], 10);
+
+  if (!target || !Number.isInteger(amount) || amount < 1 || amount > 99) {
+    await message.reply(`Use: \`${PREFIX}purgeuser @user amount\` — amount must be between **1** and **99**.`);
+    return;
+  }
+
+  const botMember = message.guild.members.me;
+  const botCanManageMessages = botMember?.permissionsIn(message.channel).has(PermissionsBitField.Flags.ManageMessages);
+
+  if (!botCanManageMessages) {
+    await message.reply('I need the **Manage Messages** permission to purge messages here.');
+    return;
+  }
+
+  try {
+    const fetched = await message.channel.messages.fetch({ limit: 100 });
+    const userMessages = fetched
+      .filter(msg => msg.author.id === target.id)
+      .first(amount);
+
+    if (userMessages.length === 0) {
+      await message.reply(`No recent messages found from ${target}.`);
+      return;
+    }
+
+    const deleted = await message.channel.bulkDelete(userMessages, true);
+    const reply = await message.channel.send(`✅ Purged **${deleted.size}** recent message(s) from ${target}.`);
+
+    setTimeout(() => {
+      reply.delete().catch(() => null);
+    }, 5000);
+  } catch (err) {
+    logger.error('Failed to purge user messages', err);
+    await message.channel.send('❌ Could not purge those messages. Messages older than 14 days cannot be bulk deleted.');
+  }
+}
+
+async function addRoleToUser(message) {
+  if (!isStaffModerator(message, PermissionsBitField.Flags.ManageRoles)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const target = message.mentions.members.first();
+  const role = message.mentions.roles.first();
+
+  if (!target || !role) {
+    await message.reply(`Use: \`${PREFIX}role @user @role\``);
+    return;
+  }
+
+  if (!role.editable) {
+    await message.reply('I cannot give that role. Make sure my role is above it.');
+    return;
+  }
+
+  await target.roles.add(role, `Role added by ${message.author.tag}`);
+  await message.channel.send(`✅ Added ${role} to ${target}.`);
+}
+
+async function removeRoleFromUser(message) {
+  if (!isStaffModerator(message, PermissionsBitField.Flags.ManageRoles)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const target = message.mentions.members.first();
+  const role = message.mentions.roles.first();
+
+  if (!target || !role) {
+    await message.reply(`Use: \`${PREFIX}removerole @user @role\``);
+    return;
+  }
+
+  if (!role.editable) {
+    await message.reply('I cannot remove that role. Make sure my role is above it.');
+    return;
+  }
+
+  await target.roles.remove(role, `Role removed by ${message.author.tag}`);
+  await message.channel.send(`✅ Removed ${role} from ${target}.`);
 }
 
 async function warnUser(message) {
