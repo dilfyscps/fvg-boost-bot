@@ -789,14 +789,79 @@ async function unlockChannel(message) {
 async function sendServerStats(message) {
   const guild = message.guild;
 
+  await guild.members.fetch().catch(() => null);
+
+  const owner = await guild.fetchOwner().catch(() => null);
+  const members = guild.members.cache;
+  const humans = members.filter(member => !member.user.bot).size;
+  const bots = members.filter(member => member.user.bot).size;
+
+  const textChannels = guild.channels.cache.filter(channel => channel.type === ChannelType.GuildText).size;
+  const voiceChannels = guild.channels.cache.filter(channel => channel.type === ChannelType.GuildVoice).size;
+  const categoryChannels = guild.channels.cache.filter(channel => channel.type === ChannelType.GuildCategory).size;
+  const announcementChannels = guild.channels.cache.filter(channel => channel.type === ChannelType.GuildAnnouncement).size;
+  const stageChannels = guild.channels.cache.filter(channel => channel.type === ChannelType.GuildStageVoice).size;
+  const forumChannels = guild.channels.cache.filter(channel => channel.type === ChannelType.GuildForum).size;
+
+  const roleCount = Math.max(guild.roles.cache.size - 1, 0);
+  const emojiCount = guild.emojis.cache.size;
+  const stickerCount = guild.stickers.cache.size;
+  const boostCount = guild.premiumSubscriptionCount || 0;
+  const boostTier = guild.premiumTier ? `Tier ${guild.premiumTier}` : 'No tier';
+  const createdTimestamp = Math.floor(guild.createdAt.getTime() / 1000);
+  const verificationLevel = guild.verificationLevel?.toString() || 'Unknown';
+
   const embed = new EmbedBuilder()
-    .setTitle('Server Statistics')
+    .setTitle(`${guild.name} Server Statistics`)
+    .setThumbnail(guild.iconURL({ size: 1024, dynamic: true }))
     .addFields(
-      { name: 'Members', value: `${guild.memberCount}`, inline: true },
-      { name: 'Channels', value: `${guild.channels.cache.size}`, inline: true },
-      { name: 'Roles', value: `${guild.roles.cache.size}`, inline: true }
+      {
+        name: 'Server Info',
+        value:
+          `**Owner:** ${owner ? owner.user.tag : 'Unknown'}\n` +
+          `**Server ID:** \`${guild.id}\`\n` +
+          `**Created:** <t:${createdTimestamp}:D> (<t:${createdTimestamp}:R>)\n` +
+          `**Verification:** ${verificationLevel}`,
+        inline: false,
+      },
+      {
+        name: 'Members',
+        value:
+          `**Total:** ${guild.memberCount}\n` +
+          `**Humans:** ${humans}\n` +
+          `**Bots:** ${bots}`,
+        inline: true,
+      },
+      {
+        name: 'Boosting',
+        value:
+          `**Boosts:** ${boostCount}\n` +
+          `**Level:** ${boostTier}`,
+        inline: true,
+      },
+      {
+        name: 'Channels',
+        value:
+          `**Text:** ${textChannels}\n` +
+          `**Voice:** ${voiceChannels}\n` +
+          `**Categories:** ${categoryChannels}\n` +
+          `**Announcements:** ${announcementChannels}\n` +
+          `**Stages:** ${stageChannels}\n` +
+          `**Forums:** ${forumChannels}\n` +
+          `**Total:** ${guild.channels.cache.size}`,
+        inline: false,
+      },
+      {
+        name: 'Server Assets',
+        value:
+          `**Roles:** ${roleCount}\n` +
+          `**Emojis:** ${emojiCount}\n` +
+          `**Stickers:** ${stickerCount}`,
+        inline: true,
+      }
     )
     .setColor(0xff7aa8)
+    .setFooter({ text: `Requested by ${message.author.tag}` })
     .setTimestamp();
 
   await message.channel.send({ embeds: [embed] });
