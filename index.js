@@ -106,15 +106,38 @@ client.once('ready', async () => {
   logger.info(`Logged in as ${client.user.tag}`);
 
   try {
-    client.user.setPresence({
-      activities: [
-        {
-          name: 'discord.gg/fvgnation',
-          type: ActivityType.Watching,
-        },
-      ],
-      status: 'online',
-    });
+    const statuses = [
+      {
+        name: 'discord.gg/fvgnation',
+        type: ActivityType.Watching,
+      },
+      {
+        name: 'with cvms h0le',
+        type: ActivityType.Playing,
+      },
+      {
+        name: 'FVGNATION Radio ♡',
+        type: ActivityType.Listening,
+      },
+      {
+        name: 'with bttms h0le',
+        type: ActivityType.Playing,
+      },
+    ];
+
+    let statusIndex = 0;
+
+    const updatePresence = () => {
+      client.user.setPresence({
+        activities: [statuses[statusIndex]],
+        status: 'online',
+      });
+
+      statusIndex = (statusIndex + 1) % statuses.length;
+    };
+
+    updatePresence();
+    setInterval(updatePresence, 120000);
   } catch (err) {
     logger.warn('Failed to set presence', err);
   }
