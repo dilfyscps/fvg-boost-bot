@@ -57,6 +57,7 @@ const modApplications = new Map();
 const modApplicationChannels = new Map();
 
 const WARNINGS_FILE = path.join(__dirname, 'warnings.json');
+const TWITTER_FEEDS_FILE = path.join(__dirname, 'twitter-feeds.json');
 
 let warnings = {};
 
@@ -71,6 +72,7 @@ try {
 }
 
 let boostData = storage.loadBoostData(BOOST_DATA_FILE);
+let twitterFeeds = loadTwitterFeeds();
 
 client.once('ready', () => {
   logger.info(`Logged in as ${client.user.tag}`);
@@ -87,6 +89,8 @@ client.once('ready', () => {
   } catch (err) {
     logger.warn('Failed to set presence', err);
   }
+
+  startTwitterFeedWatcher();
 });
 
 client.on('messageCreate', async (message) => {
@@ -290,6 +294,21 @@ client.on('messageCreate', async (message) => {
 
   if (command === `${PREFIX}boosterlist`) {
     await sendBoosterList(message);
+    return;
+  }
+
+  if (command === `${PREFIX}twitteradd`) {
+    await addTwitterFeed(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}twitterlist`) {
+    await listTwitterFeeds(message);
+    return;
+  }
+
+  if (command === `${PREFIX}twitterremove`) {
+    await removeTwitterFeed(message, args);
     return;
   }
 
@@ -613,7 +632,10 @@ async function sendHelpEmbed(message) {
 \`${PREFIX}note your note\` — (Staff) Add a note to the channel
 \`${PREFIX}say #channel message\` — (Staff) Make the bot send a message
 \`${PREFIX}embed #channel Title | Description\` — (Staff) Send a custom embed
-\`${PREFIX}announce #channel content | description | image/gif url | button label | button url\` — (Staff) Send an announcement with optional image/button`,
+\`${PREFIX}announce #channel content | description | image/gif url | button label | button url\` — (Staff) Send an announcement with optional image/button
+\`${PREFIX}twitteradd username #channel rssFeedUrl\` — (Staff) Watch an X/Twitter RSS feed
+\`${PREFIX}twitterlist\` — (Staff) View watched X/Twitter feeds
+\`${PREFIX}twitterremove username\` — (Staff) Remove a watched X/Twitter feed`,
     },
   ];
 
@@ -689,6 +711,28 @@ function saveWarnings() {
     fs.writeFileSync(WARNINGS_FILE, JSON.stringify(warnings, null, 2));
   } catch (err) {
     logger.error('Failed to save warnings', err);
+  }
+}
+
+function loadTwitterFeeds() {
+  try {
+    if (fs.existsSync(TWITTER_FEEDS_FILE)) {
+      return JSON.parse(fs.readFileSync(TWITTER_FEEDS_FILE, 'utf8'));
+    }
+
+    fs.writeFileSync(TWITTER_FEEDS_FILE, JSON.stringify([], null, 2));
+    return [];
+  } catch (err) {
+    logger.error('Failed to load Twitter feeds', err);
+    return [];
+  }
+}
+
+function saveTwitterFeeds() {
+  try {
+    fs.writeFileSync(TWITTER_FEEDS_FILE, JSON.stringify(twitterFeeds, null, 2));
+  } catch (err) {
+    logger.error('Failed to save Twitter feeds', err);
   }
 }
 
@@ -1481,6 +1525,182 @@ async function remindUserToVerify(user, boostCount) {
   } catch (err) {
     logger.error(`Could not DM ${user.tag} about boost verification.`);
   }
+}
+
+async function addTwitterFeed(message, args) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const username = args[1]?.replace('@', '').toLowerCase();
+  const channel = message.mentions.channels.first();
+  const feedUrl = args.find(arg => arg.startsWith('http'));
+
+  if (!username || !channel || !feedUrl) {
+    await message.reply(`Use: \`${PREFIX}twitteradd username #channel rssFeedUrl\``);
+    return;
+  }
+
+  if (!feedUrl.startsWith('http://') && !feedUrl.startsWith('https://')) {
+    await message.reply('Please provide a valid RSS feed URL.');
+    return;
+  }
+
+  const existing = twitterFeeds.find(feed => feed.username === username);
+
+  if (existing) {
+    existing.channelId = channel.id;
+    existing.feedUrl = feedUrl;
+    existing.updatedAt = new Date().toISOString();
+  } else {
+    twitterFeeds.push({
+      username,
+      channelId: channel.id,
+      feedUrl,
+      lastPostLink: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  saveTwitterFeeds();
+
+  await message.reply(`✅ Watching **@${username}** and posting new posts in ${channel}.`);
+}
+
+async function listTwitterFeeds(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  if (twitterFeeds.length === 0) {
+    await message.reply('No X/Twitter feeds are being watched yet.');
+    return;
+  }
+
+  const lines = twitterFeeds.map((feed, index) => `**${index + 1}.** @${feed.username} → <#${feed.channelId}>`);
+
+  const embed = new EmbedBuilder()
+    .setTitle('Watched X/Twitter Feeds')
+    .setDescription(lines.join('\n'))
+    .setColor(0xff7aa8)
+    .setTimestamp();
+
+  await message.channel.send({ embeds: [embed] });
+}
+
+async function removeTwitterFeed(message, args) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const username = args[1]?.replace('@', '').toLowerCase();
+
+  if (!username) {
+    await message.reply(`Use: \`${PREFIX}twitterremove username\``);
+    return;
+  }
+
+  const index = twitterFeeds.findIndex(feed => feed.username === username);
+
+  if (index === -1) {
+    await message.reply(`@${username} is not being watched.`);
+    return;
+  }
+
+  twitterFeeds.splice(index, 1);
+  saveTwitterFeeds();
+
+  await message.reply(`✅ Removed **@${username}** from watched X/Twitter feeds.`);
+}
+
+function startTwitterFeedWatcher() {
+  checkTwitterFeeds().catch(err => logger.error('Twitter feed check failed', err));
+
+  setInterval(() => {
+    checkTwitterFeeds().catch(err => logger.error('Twitter feed check failed', err));
+  }, 5 * 60 * 1000);
+}
+
+async function checkTwitterFeeds() {
+  if (!twitterFeeds.length) return;
+
+  for (const feed of twitterFeeds) {
+    try {
+      const posts = await fetchRssPosts(feed.feedUrl);
+      const newestPost = posts[0];
+
+      if (!newestPost || !newestPost.link) continue;
+
+      if (!feed.lastPostLink) {
+        feed.lastPostLink = newestPost.link;
+        feed.updatedAt = new Date().toISOString();
+        saveTwitterFeeds();
+        continue;
+      }
+
+      if (newestPost.link === feed.lastPostLink) continue;
+
+      const channel = await client.channels.fetch(feed.channelId).catch(() => null);
+
+      if (!channel || !channel.isTextBased()) continue;
+
+      const embed = new EmbedBuilder()
+        .setTitle(`New Post from @${feed.username}`)
+        .setDescription(newestPost.title || 'New X/Twitter post')
+        .setURL(newestPost.link)
+        .setColor(0xff7aa8)
+        .setTimestamp();
+
+      await channel.send({
+        content: newestPost.link,
+        embeds: [embed],
+      });
+
+      feed.lastPostLink = newestPost.link;
+      feed.updatedAt = new Date().toISOString();
+      saveTwitterFeeds();
+    } catch (err) {
+      logger.error(`Failed to check Twitter feed for @${feed.username}`, err);
+    }
+  }
+}
+
+async function fetchRssPosts(feedUrl) {
+  const response = await fetch(feedUrl);
+
+  if (!response.ok) {
+    throw new Error(`RSS request failed with status ${response.status}`);
+  }
+
+  const xml = await response.text();
+  const itemMatches = [...xml.matchAll(/<item>[\s\S]*?<\/item>/g)];
+
+  return itemMatches.map(match => {
+    const item = match[0];
+    return {
+      title: decodeXml(getXmlValue(item, 'title')),
+      link: decodeXml(getXmlValue(item, 'link')),
+      pubDate: decodeXml(getXmlValue(item, 'pubDate')),
+    };
+  }).filter(post => post.link);
+}
+
+function getXmlValue(xml, tagName) {
+  const match = xml.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i'));
+  return match ? match[1].replace('<![CDATA[', '').replace(']]>', '').trim() : '';
+}
+
+function decodeXml(value) {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 }
 
 async function sendBoostCount(message) {
