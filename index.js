@@ -293,6 +293,10 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  if (command === `${PREFIX}purge`) {
+    await purgeMessages(message, args);
+    return;
+  }
   if (command === `${PREFIX}warn`) {
     await warnUser(message);
     return;
@@ -528,7 +532,7 @@ async function sendHelpEmbed(message) {
     {
       id: 'staff',
       title: 'Staff Tools',
-      body: `\`${PREFIX}approve\` / \`${PREFIX}deny\` — (Staff) Approve/deny a verification channel\n\`${PREFIX}warn @user reason\` — (Staff) Warn a user\n\`${PREFIX}warnings @user\` — View a user's warnings\n\`${PREFIX}clearwarns @user\` — (Staff) Clear a user's warnings\n\`${PREFIX}close\` — (Staff) Close a verification channel\n\`${PREFIX}note your note\` — (Staff) Add a note to the channel\n\`${PREFIX}say #channel message\` — (Staff) Make the bot send a message\n\`${PREFIX}embed #channel Title | Description\` — (Staff) Send a custom embed\n\`${PREFIX}announce #channel content | description | image/gif url | button label | button url\` — (Staff) Send an announcement with optional image/button`,
+      body: `\`${PREFIX}approve\` / \`${PREFIX}deny\` — (Staff) Approve/deny a verification channel\n\`${PREFIX}purge amount\` — (Staff) Delete recent messages\n\`${PREFIX}warn @user reason\` — (Staff) Warn a user\n\`${PREFIX}warnings @user\` — View a user's warnings\n\`${PREFIX}clearwarns @user\` — (Staff) Clear a user's warnings\n\`${PREFIX}close\` — (Staff) Close a verification channel\n\`${PREFIX}note your note\` — (Staff) Add a note to the channel\n\`${PREFIX}say #channel message\` — (Staff) Make the bot send a message\n\`${PREFIX}embed #channel Title | Description\` — (Staff) Send a custom embed\n\`${PREFIX}announce #channel content | description | image/gif url | button label | button url\` — (Staff) Send an announcement with optional image/button`,
     },
   ];
 
@@ -604,6 +608,45 @@ function saveWarnings() {
     fs.writeFileSync(WARNINGS_FILE, JSON.stringify(warnings, null, 2));
   } catch (err) {
     logger.error('Failed to save warnings', err);
+  }
+}
+
+async function purgeMessages(message, args) {
+  const hasStaffRole = message.member.roles.cache.has(STAFF_ROLE_ID);
+  const hasManageMessages = message.member.permissions?.has(PermissionsBitField.Flags.ManageMessages) || message.member.permissions?.has(PermissionsBitField.Flags.Administrator);
+
+  if (!hasStaffRole && !hasManageMessages) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const botMember = message.guild.members.me;
+  const botCanManageMessages = botMember?.permissionsIn(message.channel).has(PermissionsBitField.Flags.ManageMessages);
+
+  if (!botCanManageMessages) {
+    await message.reply('I need the **Manage Messages** permission to purge messages here.');
+    return;
+  }
+
+  const amount = parseInt(args[1], 10);
+
+  if (!Number.isInteger(amount) || amount < 1 || amount > 99) {
+    await message.reply(`Use: \`${PREFIX}purge amount\` — amount must be between **1** and **99**.`);
+    return;
+  }
+
+  try {
+    const deleted = await message.channel.bulkDelete(amount + 1, true);
+    const deletedCount = Math.max(deleted.size - 1, 0);
+
+    const reply = await message.channel.send(`✅ Purged **${deletedCount}** message(s).`);
+
+    setTimeout(() => {
+      reply.delete().catch(() => null);
+    }, 5000);
+  } catch (err) {
+    logger.error('Failed to purge messages', err);
+    await message.channel.send('❌ Could not purge messages. Messages older than 14 days cannot be bulk deleted.');
   }
 }
 
