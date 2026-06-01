@@ -1258,19 +1258,55 @@ async function sendTweetPost(message) {
 
   const tweetInfo = parseTweetUrl(tweetUrl);
 
-  const embed = new EmbedBuilder()
-    .setAuthor({ name: tweetInfo.username ? `@${tweetInfo.username}` : 'X/Twitter Post' })
-    .setTitle('New X/Twitter Post')
-    .setDescription(optionalText || 'Tap the button below to view the post.')
-    .setColor(0xff7aa8)
-    .setTimestamp();
+  if (!tweetInfo.statusId) {
+    await message.reply('That does not look like a valid X/Twitter status link.');
+    return;
+  }
 
-  const row = new ActionRowBuilder().addComponents(
+  const tweetDetails = await fetchTweetDetails(tweetInfo.statusId).catch(err => {
+    logger.warn('Failed to fetch tweet details for manual tweetpost', err);
+    return null;
+  });
+
+  const displayUsername = tweetDetails?.username || tweetInfo.username || 'twitter';
+  const description = cleanTweetText(optionalText || tweetDetails?.text || '');
+  const media = tweetDetails?.media || {};
+
+  const embed = new EmbedBuilder()
+    .setAuthor({ name: `@${displayUsername}` })
+    .setColor(0xff7aa8)
+    .setTimestamp(tweetDetails?.createdAt ? new Date(tweetDetails.createdAt) : new Date());
+
+  if (description) {
+    embed.setDescription(description);
+  }
+
+  if (media.imageUrl) {
+    embed.setImage(media.imageUrl);
+  }
+
+  if (!description && !media.imageUrl && !media.videoUrl) {
+    await message.reply('I could not extract text, image, or video from that tweet. Try another tweet link or add text after the link.');
+    return;
+  }
+
+  const buttons = [
     new ButtonBuilder()
       .setLabel('View Post')
       .setStyle(ButtonStyle.Link)
-      .setURL(tweetUrl)
-  );
+      .setURL(tweetUrl),
+  ];
+
+  if (media.videoUrl) {
+    buttons.push(
+      new ButtonBuilder()
+        .setLabel('View Video')
+        .setStyle(ButtonStyle.Link)
+        .setURL(media.videoUrl)
+    );
+  }
+
+  const row = new ActionRowBuilder().addComponents(buttons);
 
   await targetChannel.send({
     embeds: [embed],
@@ -1287,16 +1323,83 @@ async function sendTweetPost(message) {
 function normalizeTweetUrl(url) {
   return url
     .replace('twitter.com', 'x.com')
-    .replace(/[)>.,]+$/g, '');
+    .replace(/[)>.,]+$/g, '')
+    .split('?')[0];
 }
 
 function parseTweetUrl(url) {
-  const match = url.match(/x\.com\/([^\/\s]+)\/status\/([0-9]+)/i);
+  const normalized = normalizeTweetUrl(url);
+  const match = normalized.match(/x\.com\/([^\/\s]+)\/status\/([0-9]+)/i);
 
   return {
     username: match?.[1] || null,
     statusId: match?.[2] || null,
   };
+}
+
+async function fetchTweetDetails(statusId) {
+  const response = await fetch(`https://cdn.syndication.twimg.com/tweet-result?id=${statusId}&lang=en`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      Accept: 'application/json,text/plain,*/*',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Tweet details request failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+  const media = extractTweetMedia(data);
+
+  return {
+    text: data.text || data.full_text || '',
+    username: data.user?.screen_name || data.user?.name || data.user?.id_str || null,
+    createdAt: data.created_at || data.createdAt || null,
+    media,
+  };
+}
+
+function extractTweetMedia(tweetData) {
+  const mediaItems = [
+    ...(Array.isArray(tweetData.mediaDetails) ? tweetData.mediaDetails : []),
+    ...(Array.isArray(tweetData.photos) ? tweetData.photos : []),
+    ...(Array.isArray(tweetData.extended_entities?.media) ? tweetData.extended_entities.media : []),
+    ...(Array.isArray(tweetData.entities?.media) ? tweetData.entities.media : []),
+  ];
+
+  const result = {
+    imageUrl: null,
+    videoUrl: null,
+  };
+
+  for (const item of mediaItems) {
+    const type = item.type || item.media_type;
+    const imageUrl = item.media_url_https || item.media_url || item.url || item.image_url || item.thumbnail_url;
+
+    if (!result.imageUrl && imageUrl && (type === 'photo' || imageUrl.includes('twimg.com') || imageUrl.startsWith('http'))) {
+      result.imageUrl = imageUrl;
+    }
+
+    const variants = item.video_info?.variants || item.video_variants || item.variants || [];
+    const mp4Variants = variants
+      .filter(variant => variant.url && (!variant.content_type || variant.content_type === 'video/mp4'))
+      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+    if (!result.videoUrl && mp4Variants[0]?.url) {
+      result.videoUrl = mp4Variants[0].url;
+    }
+
+    if (!result.imageUrl && item.video_info && imageUrl) {
+      result.imageUrl = imageUrl;
+    }
+  }
+
+  if (!result.imageUrl && Array.isArray(tweetData.photos) && tweetData.photos[0]?.url) {
+    result.imageUrl = tweetData.photos[0].url;
+  }
+
+  return result;
 }
 
 async function sendSayMessage(message) {
