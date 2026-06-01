@@ -390,6 +390,11 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  if (command === `${PREFIX}syncboosters`) {
+    await syncBoosters(message);
+    return;
+  }
+
   if (command === `${PREFIX}twitteradd`) {
     await addTwitterFeed(message, args);
     return;
@@ -2211,6 +2216,7 @@ async function sendBoosterList(message) {
   await message.channel.send({ embeds: [embed] });
 }
 
+
 async function sendLostBoosters(message) {
   if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
     await message.reply('You do not have permission to use this command.');
@@ -2245,6 +2251,67 @@ async function sendLostBoosters(message) {
     .setDescription(lines.join('\n'))
     .setFooter({ text: lostBoosters.length > 25 ? `Showing 25 of ${lostBoosters.length}` : `${lostBoosters.length} lost booster(s)` })
     .setColor(0xff5555)
+    .setTimestamp();
+
+  await message.channel.send({ embeds: [embed] });
+}
+
+async function syncBoosters(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  await message.reply('🔄 Syncing verified boosters...');
+
+  await message.guild.members.fetch().catch(() => null);
+
+  let removed = 0;
+  let active = 0;
+
+  for (const [userId, data] of Object.entries(boostData)) {
+    if (!data?.verified) continue;
+
+    const member = message.guild.members.cache.get(userId);
+
+    if (member?.premiumSince) {
+      active++;
+      continue;
+    }
+
+    const oldBoostCount = data.verifiedBoosts || data.boosts || 0;
+
+    boostData[userId] = {
+      ...data,
+      boosts: 0,
+      verifiedBoosts: 0,
+      verified: false,
+      lostBoostAt: new Date().toISOString(),
+      oldVerifiedBoosts: oldBoostCount,
+      lostBoostAlerted: true,
+      syncedRemoved: true,
+    };
+
+    removed++;
+  }
+
+  storage.saveBoostData(BOOST_DATA_FILE, boostData);
+
+  if (supabase.isSupabaseConfigured()) {
+    try {
+      await supabase.saveBoosterList(boostData);
+    } catch (err) {
+      logger.error('Failed to save sync to Supabase', err);
+    }
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('🔄 Booster Sync Complete')
+    .addFields(
+      { name: 'Still Boosting', value: `${active}`, inline: true },
+      { name: 'Removed', value: `${removed}`, inline: true }
+    )
+    .setColor(0xff7aa8)
     .setTimestamp();
 
   await message.channel.send({ embeds: [embed] });
