@@ -351,14 +351,18 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
+    const oldBoostData = boostData[target.id] || {};
+    const oldBoostCount = oldBoostData.verifiedBoosts || oldBoostData.boosts || 0;
+
     boostData[target.id] = {
-      ...(boostData[target.id] || {}),
+      ...oldBoostData,
       boosts: 0,
       verifiedBoosts: 0,
       verified: false,
       username: target.tag,
       removedAt: new Date().toISOString(),
       removedBy: message.author.id,
+      oldVerifiedBoosts: oldBoostCount,
       lostBoostAlerted: true,
     };
 
@@ -378,6 +382,11 @@ client.on('messageCreate', async (message) => {
 
   if (command === `${PREFIX}boosterlist`) {
     await sendBoosterList(message);
+    return;
+  }
+
+  if (command === `${PREFIX}lostboosters`) {
+    await sendLostBoosters(message);
     return;
   }
 
@@ -621,10 +630,18 @@ if (command === `${PREFIX}note`) {
       try {
         const userIdStr = member.id;
         const current = boostData[userIdStr]?.boosts || 0;
+        const verifiedBoosts = Math.max(current, 2);
+
         boostData[userIdStr] = {
-          boosts: Math.max(current, 2),
+          ...(boostData[userIdStr] || {}),
+          boosts: verifiedBoosts,
+          verifiedBoosts,
+          verified: true,
           username: member.user.tag,
+          verifiedAt: new Date().toISOString(),
+          verifiedBy: message.author.id,
           lastBoostedAt: new Date().toISOString(),
+          lostBoostAlerted: false,
         };
 
         storage.saveBoostData(BOOST_DATA_FILE, boostData);
@@ -705,6 +722,8 @@ async function handleBoosterRemoved(member) {
   if (!existing || !existing.verified) return;
   if (existing.lostBoostAlerted) return;
 
+  const oldBoostCount = existing.verifiedBoosts || existing.boosts || 0;
+
   boostData[member.id] = {
     ...existing,
     boosts: 0,
@@ -712,6 +731,7 @@ async function handleBoosterRemoved(member) {
     verified: false,
     username: member.user.tag,
     lostBoostAt: new Date().toISOString(),
+    oldVerifiedBoosts: oldBoostCount,
     lostBoostAlerted: true,
   };
 
@@ -756,7 +776,7 @@ async function sendHelpEmbed(message) {
     {
       id: 'boosting',
       title: 'Boosting',
-      body: `\`${PREFIX}verifyboost\` (DM) — Start 2x boost verification flow\n\`${PREFIX}boostcount @user\` — Show tracked boosts for a user\n\`${PREFIX}addboost @user amount\` — (Staff) Set verified boost count\n\`${PREFIX}boosterlist\` — (Staff) View all verified boosters\n\`${PREFIX}removeboost @user\` — (Staff) Remove a verified booster\nAuto-detects when verified boosters stop boosting and removes them from the verified list.\n\`${PREFIX}testboostdm @user\` — (Staff) Send test verification DM`,
+      body: `\`${PREFIX}verifyboost\` (DM) — Start 2x boost verification flow\n\`${PREFIX}boostcount @user\` — Show tracked boosts for a user\n\`${PREFIX}addboost @user amount\` — (Staff) Set verified boost count\n\`${PREFIX}boosterlist\` — (Staff) View all verified boosters\n\`${PREFIX}lostboosters\` — (Staff) View users who lost verified boost status\n\`${PREFIX}removeboost @user\` — (Staff) Remove a verified booster\nAuto-detects when verified boosters stop boosting and removes them from the verified list.\n\`${PREFIX}testboostdm @user\` — (Staff) Send test verification DM`,
     },
     {
       id: 'moderation',
@@ -2186,6 +2206,45 @@ async function sendBoosterList(message) {
     .addFields({ name: 'Supabase', value: supabaseStatus, inline: false })
     .setFooter({ text: boosters.length > 25 ? `Showing 25 of ${boosters.length}` : `${boosters.length} verified booster(s)` })
     .setColor(0xff7aa8)
+    .setTimestamp();
+
+  await message.channel.send({ embeds: [embed] });
+}
+
+async function sendLostBoosters(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const lostBoosters = Object.entries(boostData)
+    .filter(([, data]) => data && (data.lostBoostAt || data.removedAt || data.lostBoostAlerted) && !data.verified)
+    .sort((a, b) => {
+      const aDate = new Date(a[1].lostBoostAt || a[1].removedAt || 0).getTime();
+      const bDate = new Date(b[1].lostBoostAt || b[1].removedAt || 0).getTime();
+      return bDate - aDate;
+    });
+
+  if (lostBoosters.length === 0) {
+    await message.reply('♡ no lost boosters found.');
+    return;
+  }
+
+  const lines = lostBoosters.slice(0, 25).map(([userId, data], index) => {
+    const lostAt = data.lostBoostAt || data.removedAt;
+    const lostText = lostAt
+      ? `<t:${Math.floor(new Date(lostAt).getTime() / 1000)}:R>`
+      : 'unknown time';
+    const oldBoosts = data.oldVerifiedBoosts || data.previousVerifiedBoosts || data.verifiedBoosts || data.boosts || 0;
+
+    return `**${index + 1}.** <@${userId}> — lost ${lostText} • old boosts: **${oldBoosts}**`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle('💔 Lost Boosters')
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: lostBoosters.length > 25 ? `Showing 25 of ${lostBoosters.length}` : `${lostBoosters.length} lost booster(s)` })
+    .setColor(0xff5555)
     .setTimestamp();
 
   await message.channel.send({ embeds: [embed] });
