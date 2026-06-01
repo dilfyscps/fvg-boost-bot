@@ -445,6 +445,11 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  if (command === `${PREFIX}teststicky`) {
+    await testStickySupabase(message);
+    return;
+  }
+
   if (command === `${PREFIX}purge`) {
     await purgeMessages(message, args);
     return;
@@ -1577,6 +1582,7 @@ async function viewStickyMessage(message) {
   await message.channel.send({ embeds: [embed] });
 }
 
+
 async function removeStickyMessage(message) {
   const channel = message.mentions.channels.first();
 
@@ -1599,6 +1605,31 @@ async function removeStickyMessage(message) {
   }
 
   await message.reply(`✅ Removed sticky message from ${channel}.`);
+}
+
+async function testStickySupabase(message) {
+  if (!isStaffModerator(message, PermissionsBitField.Flags.ManageMessages)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  if (!supabase.saveStickyMessage) {
+    await message.reply('❌ saveStickyMessage() is not available.');
+    return;
+  }
+
+  try {
+    const result = await supabase.saveStickyMessage('test-channel', {
+      content: 'Sticky Supabase test',
+      createdBy: message.author.id,
+      stickyMessageId: 'test-message',
+    });
+
+    await message.reply(`✅ Supabase test completed. Result: ${JSON.stringify(result)}`);
+  } catch (err) {
+    logger.error('Sticky Supabase test failed', err);
+    await message.reply(`❌ Supabase test failed: ${err.message}`);
+  }
 }
 
 async function handleStickyMessageActivity(message) {

@@ -6,7 +6,10 @@ const {
   SUPABASE_URL,
   SUPABASE_KEY,
   SUPABASE_BOOSTER_TABLE,
+  SUPABASE_STICKY_TABLE,
 } = config;
+
+const STICKY_TABLE = SUPABASE_STICKY_TABLE || process.env.SUPABASE_STICKY_TABLE || 'sticky_messages';
 
 const supabase = SUPABASE_URL && SUPABASE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_KEY)
@@ -77,7 +80,7 @@ async function loadStickyMessages() {
   }
 
   const { data, error } = await supabase
-    .from('sticky_messages')
+    .from(STICKY_TABLE)
     .select('*');
 
   if (error) {
@@ -103,33 +106,35 @@ async function loadStickyMessages() {
 async function saveStickyMessage(channelId, sticky) {
   if (!supabase) {
     logger.warn('Supabase is not configured. Skipping sticky message save.');
-    return;
+    return { saved: false, reason: 'Supabase is not configured.' };
   }
 
   const { error } = await supabase
-    .from('sticky_messages')
+    .from(STICKY_TABLE)
     .upsert({
       channel_id: channelId,
       content: sticky.content,
       sticky_message_id: sticky.stickyMessageId || null,
       created_by: sticky.createdBy || null,
       updated_at: new Date().toISOString(),
-    });
+    }, { onConflict: 'channel_id' });
 
   if (error) {
     logger.error('Supabase saveStickyMessage failed', error);
     throw error;
   }
+
+  return { saved: true };
 }
 
 async function deleteStickyMessage(channelId) {
   if (!supabase) {
     logger.warn('Supabase is not configured. Skipping sticky message delete.');
-    return;
+    return { deleted: false, reason: 'Supabase is not configured.' };
   }
 
   const { error } = await supabase
-    .from('sticky_messages')
+    .from(STICKY_TABLE)
     .delete()
     .eq('channel_id', channelId);
 
@@ -137,6 +142,8 @@ async function deleteStickyMessage(channelId) {
     logger.error('Supabase deleteStickyMessage failed', error);
     throw error;
   }
+
+  return { deleted: true };
 }
 
 module.exports = {
