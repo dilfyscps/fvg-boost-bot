@@ -24,7 +24,7 @@ const BOOSTER_ROLE_IDS = [
   '1509166982656950292',
 ];
 
-const BOOST_LOG_CHANNEL_ID = 'PUT_BOOST_LOG_CHANNEL_ID_HERE';
+const BOOST_LOG_CHANNEL_ID = '1510913269211205785';
 const BOOST_DATA_FILE = path.join(__dirname, 'boosts.json');
 
 const client = new Client({
