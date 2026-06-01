@@ -1,6 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const config = require('./config');
 const logger = require('./logger');
+const WebSocket = require('ws');
 
 const {
   SUPABASE_URL,
@@ -12,7 +13,11 @@ const {
 const STICKY_TABLE = SUPABASE_STICKY_TABLE || process.env.SUPABASE_STICKY_TABLE || 'sticky_messages';
 
 const supabase = SUPABASE_URL && SUPABASE_KEY
-  ? createClient(SUPABASE_URL, SUPABASE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_KEY, {
+      realtime: {
+        transport: WebSocket,
+      },
+    })
   : null;
 
 function isSupabaseConfigured() {
