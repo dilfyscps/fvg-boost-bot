@@ -53,7 +53,22 @@ const client = new Client({
 const verificationChannels = new Map();
 const pendingVerifications = new Set();
 const modApplications = new Map();
+
 const modApplicationChannels = new Map();
+
+const WARNINGS_FILE = path.join(__dirname, 'warnings.json');
+
+let warnings = {};
+
+try {
+  if (fs.existsSync(WARNINGS_FILE)) {
+    warnings = JSON.parse(fs.readFileSync(WARNINGS_FILE, 'utf8'));
+  } else {
+    fs.writeFileSync(WARNINGS_FILE, JSON.stringify({}, null, 2));
+  }
+} catch (err) {
+  logger.error('Failed to load warnings', err);
+}
 
 let boostData = storage.loadBoostData(BOOST_DATA_FILE);
 
@@ -278,6 +293,21 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  if (command === `${PREFIX}warn`) {
+    await warnUser(message);
+    return;
+  }
+
+  if (command === `${PREFIX}warnings`) {
+    await showWarnings(message);
+    return;
+  }
+
+  if (command === `${PREFIX}clearwarns`) {
+    await clearWarnings(message);
+    return;
+  }
+
   if (command === `${PREFIX}modpending`) {
   await message.reply(`📋 Open mod applications: ${modApplicationChannels.size}`);
   return;
@@ -498,7 +528,7 @@ async function sendHelpEmbed(message) {
     {
       id: 'staff',
       title: 'Staff Tools',
-      body: `\`${PREFIX}approve\` / \`${PREFIX}deny\` — (Staff) Approve/deny a verification channel\n\`${PREFIX}close\` — (Staff) Close a verification channel\n\`${PREFIX}note your note\` — (Staff) Add a note to the channel\n\`${PREFIX}say #channel message\` — (Staff) Make the bot send a message\n\`${PREFIX}embed #channel Title | Description\` — (Staff) Send a custom embed\n\`${PREFIX}announce #channel content | description | image/gif url | button label | button url\` — (Staff) Send an announcement with optional image/button`,
+      body: `\`${PREFIX}approve\` / \`${PREFIX}deny\` — (Staff) Approve/deny a verification channel\n\`${PREFIX}warn @user reason\` — (Staff) Warn a user\n\`${PREFIX}warnings @user\` — View a user's warnings\n\`${PREFIX}clearwarns @user\` — (Staff) Clear a user's warnings\n\`${PREFIX}close\` — (Staff) Close a verification channel\n\`${PREFIX}note your note\` — (Staff) Add a note to the channel\n\`${PREFIX}say #channel message\` — (Staff) Make the bot send a message\n\`${PREFIX}embed #channel Title | Description\` — (Staff) Send a custom embed\n\`${PREFIX}announce #channel content | description | image/gif url | button label | button url\` — (Staff) Send an announcement with optional image/button`,
     },
   ];
 
@@ -567,6 +597,123 @@ async function sendHelpEmbed(message) {
       // ignore
     }
   });
+}
+
+function saveWarnings() {
+  try {
+    fs.writeFileSync(WARNINGS_FILE, JSON.stringify(warnings, null, 2));
+  } catch (err) {
+    logger.error('Failed to save warnings', err);
+  }
+}
+
+async function warnUser(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const target = message.mentions.members.first();
+
+  if (!target) {
+    await message.reply(`Use: \`${PREFIX}warn @user reason\``);
+    return;
+  }
+
+  if (target.id === message.author.id) {
+    await message.reply('You cannot warn yourself.');
+    return;
+  }
+
+  if (target.user.bot) {
+    await message.reply('You cannot warn bots.');
+    return;
+  }
+
+  const reason = message.content.split(' ').slice(2).join(' ').trim() || 'No reason provided';
+
+  if (!warnings[target.id]) {
+    warnings[target.id] = [];
+  }
+
+  warnings[target.id].push({
+    moderatorId: message.author.id,
+    moderatorTag: message.author.tag,
+    reason,
+    date: new Date().toISOString(),
+  });
+
+  saveWarnings();
+
+  const count = warnings[target.id].length;
+
+  const embed = new EmbedBuilder()
+    .setTitle('User Warned')
+    .setDescription(`${target} has been warned.`)
+    .addFields(
+      { name: 'Reason', value: reason, inline: false },
+      { name: 'Total Warnings', value: `${count}`, inline: true },
+      { name: 'Moderator', value: `${message.author}`, inline: true }
+    )
+    .setColor(0xffaa55)
+    .setTimestamp();
+
+  await message.channel.send({ embeds: [embed] });
+
+  await target.send(`♡ you were warned in FVGNATION.\nReason: ${reason}`).catch(() => null);
+}
+
+async function showWarnings(message) {
+  const target = message.mentions.users.first();
+
+  if (!target) {
+    await message.reply(`Use: \`${PREFIX}warnings @user\``);
+    return;
+  }
+
+  const userWarnings = warnings[target.id] || [];
+
+  if (userWarnings.length === 0) {
+    await message.reply(`${target.tag} has no warnings.`);
+    return;
+  }
+
+  const lines = userWarnings.slice(0, 10).map((warning, index) => {
+    const date = warning.date
+      ? `<t:${Math.floor(new Date(warning.date).getTime() / 1000)}:R>`
+      : 'Unknown date';
+
+    return `**${index + 1}.** ${warning.reason}\nModerator: <@${warning.moderatorId}> • ${date}`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle(`Warnings for ${target.tag}`)
+    .setDescription(lines.join('\n\n'))
+    .setFooter({ text: userWarnings.length > 10 ? `Showing 10 of ${userWarnings.length}` : `${userWarnings.length} warning(s)` })
+    .setColor(0xffaa55)
+    .setTimestamp();
+
+  await message.channel.send({ embeds: [embed] });
+}
+
+async function clearWarnings(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const target = message.mentions.users.first();
+
+  if (!target) {
+    await message.reply(`Use: \`${PREFIX}clearwarns @user\``);
+    return;
+  }
+
+  const oldCount = warnings[target.id]?.length || 0;
+  delete warnings[target.id];
+  saveWarnings();
+
+  await message.channel.send(`✅ Cleared **${oldCount}** warning(s) for ${target.tag}.`);
 }
 
 async function sendUserInfo(message) {
