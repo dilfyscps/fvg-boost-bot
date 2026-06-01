@@ -684,6 +684,69 @@ if (command === `${PREFIX}note`) {
   }
 });
 
+client.on('guildMemberUpdate', async (oldMember, newMember) => {
+  try {
+    if (!oldMember.guild || oldMember.guild.id !== GUILD_ID) return;
+
+    const wasBoosting = Boolean(oldMember.premiumSince);
+    const isBoosting = Boolean(newMember.premiumSince);
+
+    if (wasBoosting && !isBoosting) {
+      await handleBoosterRemoved(newMember);
+    }
+  } catch (err) {
+    logger.error('Failed to handle guildMemberUpdate booster removal', err);
+  }
+});
+
+async function handleBoosterRemoved(member) {
+  const existing = boostData[member.id];
+
+  if (!existing || !existing.verified) return;
+  if (existing.lostBoostAlerted) return;
+
+  boostData[member.id] = {
+    ...existing,
+    boosts: 0,
+    verifiedBoosts: 0,
+    verified: false,
+    username: member.user.tag,
+    lostBoostAt: new Date().toISOString(),
+    lostBoostAlerted: true,
+  };
+
+  storage.saveBoostData(BOOST_DATA_FILE, boostData);
+
+  if (supabase.isSupabaseConfigured()) {
+    try {
+      await supabase.saveBoosterList(boostData);
+    } catch (err) {
+      logger.error('Failed to save lost booster update to Supabase', err);
+    }
+  }
+
+  const logChannel = BOOST_LOG_CHANNEL_ID
+    ? await member.guild.channels.fetch(BOOST_LOG_CHANNEL_ID).catch(() => null)
+    : null;
+
+  if (logChannel) {
+    const embed = new EmbedBuilder()
+      .setTitle('Booster Removed')
+      .setDescription(`${member.user} is no longer boosting and was removed from the verified booster list.`)
+      .addFields(
+        { name: 'User', value: `${member.user.tag}`, inline: true },
+        { name: 'User ID', value: member.id, inline: true },
+        { name: 'Old Verified Boosts', value: `${existing.verifiedBoosts || existing.boosts || 0}`, inline: true }
+      )
+      .setColor(0xff5555)
+      .setTimestamp();
+
+    await logChannel.send({ embeds: [embed] });
+  }
+
+  await member.send('♡ it looks like you are no longer boosting FVGNATION, so your verified booster perks were removed. If this is a mistake, please contact staff.').catch(() => null);
+}
+
 async function sendHelpEmbed(message) {
   const isStaff = message.member && message.member.roles && message.member.roles.cache.has(STAFF_ROLE_ID);
 
@@ -696,7 +759,7 @@ async function sendHelpEmbed(message) {
     {
       id: 'boosting',
       title: 'Boosting',
-      body: `\`${PREFIX}verifyboost\` (DM) — Start 2x boost verification flow\n\`${PREFIX}boostcount @user\` — Show tracked boosts for a user\n\`${PREFIX}addboost @user amount\` — (Staff) Set verified boost count\n\`${PREFIX}boosterlist\` — (Staff) View all verified boosters\n\`${PREFIX}removeboost @user\` — (Staff) Remove a verified booster\n\`${PREFIX}testboostdm @user\` — (Staff) Send test verification DM`,
+      body: `\`${PREFIX}verifyboost\` (DM) — Start 2x boost verification flow\n\`${PREFIX}boostcount @user\` — Show tracked boosts for a user\n\`${PREFIX}addboost @user amount\` — (Staff) Set verified boost count\n\`${PREFIX}boosterlist\` — (Staff) View all verified boosters\n\`${PREFIX}removeboost @user\` — (Staff) Remove a verified booster\nAuto-detects when verified boosters stop boosting and removes them from the verified list.\n\`${PREFIX}testboostdm @user\` — (Staff) Send test verification DM`,
     },
     {
       id: 'moderation',
