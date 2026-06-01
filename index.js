@@ -312,6 +312,16 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  if (command === `${PREFIX}twittercheck`) {
+    await runTwitterFeedCheck(message);
+    return;
+  }
+
+  if (command === `${PREFIX}tweetpost`) {
+    await sendTweetPost(message);
+    return;
+  }
+
   if (command === `${PREFIX}purge`) {
     await purgeMessages(message, args);
     return;
@@ -635,7 +645,9 @@ async function sendHelpEmbed(message) {
 \`${PREFIX}announce #channel content | description | image/gif url | button label | button url\` — (Staff) Send an announcement with optional image/button
 \`${PREFIX}twitteradd username #channel rssFeedUrl\` — (Staff) Watch an X/Twitter RSS feed
 \`${PREFIX}twitterlist\` — (Staff) View watched X/Twitter feeds
-\`${PREFIX}twitterremove username\` — (Staff) Remove a watched X/Twitter feed`,
+\`${PREFIX}twitterremove username\` — (Staff) Remove a watched X/Twitter feed
+\`${PREFIX}twittercheck\` — (Staff) Manually check watched feeds now
+\`${PREFIX}tweetpost #channel tweetLink optional text\` — (Staff) Send a clean X/Twitter embed with a button`,
     },
   ];
 
@@ -1222,6 +1234,71 @@ async function sendUserInfo(message) {
   await message.channel.send({ embeds: [embed] });
 }
 
+async function sendTweetPost(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const content = message.content.slice(`${PREFIX}tweetpost`.length).trim();
+  const mentionedChannel = message.mentions.channels.first();
+  const tweetUrlMatch = content.match(/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/[^\s]+/i);
+
+  if (!mentionedChannel || !tweetUrlMatch) {
+    await message.reply(`Use: \`${PREFIX}tweetpost #channel tweetLink optional text\``);
+    return;
+  }
+
+  const tweetUrl = normalizeTweetUrl(tweetUrlMatch[0]);
+  const targetChannel = mentionedChannel;
+  const optionalText = content
+    .replace(`<#${mentionedChannel.id}>`, '')
+    .replace(tweetUrlMatch[0], '')
+    .trim();
+
+  const tweetInfo = parseTweetUrl(tweetUrl);
+
+  const embed = new EmbedBuilder()
+    .setAuthor({ name: tweetInfo.username ? `@${tweetInfo.username}` : 'X/Twitter Post' })
+    .setTitle('New X/Twitter Post')
+    .setDescription(optionalText || 'Tap the button below to view the post.')
+    .setColor(0xff7aa8)
+    .setTimestamp();
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setLabel('View Post')
+      .setStyle(ButtonStyle.Link)
+      .setURL(tweetUrl)
+  );
+
+  await targetChannel.send({
+    embeds: [embed],
+    components: [row],
+  });
+
+  if (targetChannel.id !== message.channel.id) {
+    await message.reply(`✅ Tweet embed sent to ${targetChannel}.`);
+  } else {
+    await message.react('✅').catch(() => null);
+  }
+}
+
+function normalizeTweetUrl(url) {
+  return url
+    .replace('twitter.com', 'x.com')
+    .replace(/[)>.,]+$/g, '');
+}
+
+function parseTweetUrl(url) {
+  const match = url.match(/x\.com\/([^\/\s]+)\/status\/([0-9]+)/i);
+
+  return {
+    username: match?.[1] || null,
+    statusId: match?.[2] || null,
+  };
+}
+
 async function sendSayMessage(message) {
   if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
     await message.reply('You do not have permission to use this command.');
@@ -1622,10 +1699,23 @@ function startTwitterFeedWatcher() {
 
   setInterval(() => {
     checkTwitterFeeds().catch(err => logger.error('Twitter feed check failed', err));
-  }, 5 * 60 * 1000);
+  }, 60 * 1000);
 }
 
-async function checkTwitterFeeds() {
+async function runTwitterFeedCheck(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  await message.reply('🔎 Checking watched X/Twitter feeds now...');
+  await checkTwitterFeeds({ forcePostNewest: false });
+  await message.channel.send('✅ Feed check finished.');
+}
+
+async function checkTwitterFeeds(options = {}) {
+  const { forcePostNewest = false } = options;
+
   if (!twitterFeeds.length) return;
 
   for (const feed of twitterFeeds) {
@@ -1635,32 +1725,46 @@ async function checkTwitterFeeds() {
 
       if (!newestPost || !newestPost.link) continue;
 
-      if (!feed.lastPostLink) {
+      if (!feed.lastPostLink && !forcePostNewest) {
         feed.lastPostLink = newestPost.link;
         feed.updatedAt = new Date().toISOString();
         saveTwitterFeeds();
         continue;
       }
 
-      if (newestPost.link === feed.lastPostLink) continue;
+      if (newestPost.link === feed.lastPostLink && !forcePostNewest) continue;
 
       const channel = await client.channels.fetch(feed.channelId).catch(() => null);
 
       if (!channel || !channel.isTextBased()) continue;
 
       const embed = new EmbedBuilder()
-        .setTitle(`New Post from @${feed.username}`)
-        .setDescription(newestPost.title || 'New X/Twitter post')
-        .setURL(newestPost.link)
+        .setAuthor({ name: `@${feed.username}` })
+        .setTitle('New X/Twitter Post')
+        .setDescription(cleanTweetText(newestPost.title || newestPost.description || 'New post'))
         .setColor(0xff7aa8)
-        .setTimestamp();
+        .setTimestamp(newestPost.pubDate ? new Date(newestPost.pubDate) : new Date())
+        .setFooter({ text: 'Posted from RSS.app' });
+
+      if (newestPost.imageUrl) {
+        embed.setImage(newestPost.imageUrl);
+      }
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('View Post')
+          .setStyle(ButtonStyle.Link)
+          .setURL(newestPost.link)
+      );
 
       await channel.send({
-        content: newestPost.link,
         embeds: [embed],
+        components: [row],
       });
 
       feed.lastPostLink = newestPost.link;
+      feed.lastSeenTitle = newestPost.title || null;
+      feed.lastCheckedAt = new Date().toISOString();
       feed.updatedAt = new Date().toISOString();
       saveTwitterFeeds();
     } catch (err) {
@@ -1681,10 +1785,19 @@ async function fetchRssPosts(feedUrl) {
 
   return itemMatches.map(match => {
     const item = match[0];
+    const title = decodeXml(stripHtml(getXmlValue(item, 'title')));
+    const descriptionRaw = decodeXml(getXmlValue(item, 'description'));
+    const description = stripHtml(descriptionRaw);
+    const link = decodeXml(getXmlValue(item, 'link'));
+    const pubDate = decodeXml(getXmlValue(item, 'pubDate'));
+    const imageUrl = extractRssImage(item, descriptionRaw);
+
     return {
-      title: decodeXml(getXmlValue(item, 'title')),
-      link: decodeXml(getXmlValue(item, 'link')),
-      pubDate: decodeXml(getXmlValue(item, 'pubDate')),
+      title,
+      description,
+      link,
+      pubDate,
+      imageUrl,
     };
   }).filter(post => post.link);
 }
@@ -1701,6 +1814,43 @@ function decodeXml(value) {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'");
+}
+
+function extractRssImage(itemXml, descriptionHtml) {
+  const mediaContent = itemXml.match(/<media:content[^>]+url=["']([^"']+)["'][^>]*>/i);
+  if (mediaContent?.[1]) return decodeXml(mediaContent[1]);
+
+  const mediaThumbnail = itemXml.match(/<media:thumbnail[^>]+url=["']([^"']+)["'][^>]*>/i);
+  if (mediaThumbnail?.[1]) return decodeXml(mediaThumbnail[1]);
+
+  const enclosure = itemXml.match(/<enclosure[^>]+url=["']([^"']+)["'][^>]*type=["']image\//i);
+  if (enclosure?.[1]) return decodeXml(enclosure[1]);
+
+  const imgTag = descriptionHtml.match(/<img[^>]+src=["']([^"']+)["'][^>]*>/i);
+  if (imgTag?.[1]) return decodeXml(imgTag[1]);
+
+  return null;
+}
+
+function stripHtml(value) {
+  return value
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n\s+/g, '\n')
+    .trim();
+}
+
+function cleanTweetText(value) {
+  const cleaned = value
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/pic\.twitter\.com\/\S+/g, '')
+    .replace(/x\.com\/\S+/g, '')
+    .replace(/twitter\.com\/\S+/g, '')
+    .trim();
+
+  if (!cleaned) return 'New post';
+  return cleaned.length > 4000 ? `${cleaned.slice(0, 3997)}...` : cleaned;
 }
 
 async function sendBoostCount(message) {
