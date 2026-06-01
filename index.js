@@ -570,7 +570,6 @@ async function sendBoostCount(message) {
   await message.channel.send({ embeds: [embed] });
 }
 
-client.login(process.env.TOKEN);
 
 async function sendTestBoostDM(message) {
   if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
@@ -595,3 +594,5 @@ async function sendTestBoostDM(message) {
     await message.reply('❌ Failed to send DM. They probably have DMs disabled.');
   }
 }
+
+client.login(process.env.TOKEN);
