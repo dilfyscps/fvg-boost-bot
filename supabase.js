@@ -70,8 +70,80 @@ async function loadBoosterList() {
   return Array.isArray(data) ? data : [];
 }
 
+async function loadStickyMessages() {
+  if (!supabase) {
+    logger.warn('Supabase is not configured. Skipping sticky message load.');
+    return {};
+  }
+
+  const { data, error } = await supabase
+    .from('sticky_messages')
+    .select('*');
+
+  if (error) {
+    logger.error('Supabase loadStickyMessages failed', error);
+    throw error;
+  }
+
+  const result = {};
+
+  for (const row of data || []) {
+    result[row.channel_id] = {
+      channelId: row.channel_id,
+      content: row.content,
+      stickyMessageId: row.sticky_message_id,
+      createdBy: row.created_by,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  return result;
+}
+
+async function saveStickyMessage(channelId, sticky) {
+  if (!supabase) {
+    logger.warn('Supabase is not configured. Skipping sticky message save.');
+    return;
+  }
+
+  const { error } = await supabase
+    .from('sticky_messages')
+    .upsert({
+      channel_id: channelId,
+      content: sticky.content,
+      sticky_message_id: sticky.stickyMessageId || null,
+      created_by: sticky.createdBy || null,
+      updated_at: new Date().toISOString(),
+    });
+
+  if (error) {
+    logger.error('Supabase saveStickyMessage failed', error);
+    throw error;
+  }
+}
+
+async function deleteStickyMessage(channelId) {
+  if (!supabase) {
+    logger.warn('Supabase is not configured. Skipping sticky message delete.');
+    return;
+  }
+
+  const { error } = await supabase
+    .from('sticky_messages')
+    .delete()
+    .eq('channel_id', channelId);
+
+  if (error) {
+    logger.error('Supabase deleteStickyMessage failed', error);
+    throw error;
+  }
+}
+
 module.exports = {
   isSupabaseConfigured,
   saveBoosterList,
   loadBoosterList,
+  loadStickyMessages,
+  saveStickyMessage,
+  deleteStickyMessage,
 };

@@ -69,6 +69,7 @@ const modApplicationChannels = new Map();
 
 const WARNINGS_FILE = path.join(__dirname, 'warnings.json');
 const TWITTER_FEEDS_FILE = path.join(__dirname, 'twitter-feeds.json');
+const STICKY_MESSAGES_FILE = path.join(__dirname, 'sticky-messages.json');
 
 let warnings = {};
 
@@ -84,6 +85,18 @@ try {
 
 let boostData = storage.loadBoostData(BOOST_DATA_FILE);
 let twitterFeeds = loadTwitterFeeds();
+let stickyMessages = loadStickyMessages();
+
+if (supabase.loadStickyMessages) {
+  supabase.loadStickyMessages()
+    .then(data => {
+      if (data && typeof data === 'object') {
+        stickyMessages = data;
+        logger.info(`Loaded ${Object.keys(data).length} sticky messages from Supabase.`);
+      }
+    })
+    .catch(err => logger.error('Failed to load sticky messages from Supabase', err));
+}
 
 client.once('ready', async () => {
   logger.info(`Logged in as ${client.user.tag}`);
@@ -130,6 +143,8 @@ client.once('ready', async () => {
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
+
+  await handleStickyMessageActivity(message);
   await handleBoostSystemMessage(message);
 
   // DM verification + mod application flow
@@ -417,6 +432,16 @@ client.on('messageCreate', async (message) => {
 
   if (command === `${PREFIX}tweetpost`) {
     await sendTweetPost(message);
+    return;
+  }
+
+  if (command === `${PREFIX}stickymessage` || command === `${PREFIX}sticky` || command === `${PREFIX}sickymessage`) {
+    await handleStickyMessageCommand(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}stickymessagelist`) {
+    await listStickyMessages(message);
     return;
   }
 
@@ -917,6 +942,28 @@ function saveTwitterFeeds() {
   }
 }
 
+function loadStickyMessages() {
+  try {
+    if (fs.existsSync(STICKY_MESSAGES_FILE)) {
+      return JSON.parse(fs.readFileSync(STICKY_MESSAGES_FILE, 'utf8'));
+    }
+
+    fs.writeFileSync(STICKY_MESSAGES_FILE, JSON.stringify({}, null, 2));
+    return {};
+  } catch (err) {
+    logger.error('Failed to load sticky messages', err);
+    return {};
+  }
+}
+
+function saveStickyMessages() {
+  try {
+    fs.writeFileSync(STICKY_MESSAGES_FILE, JSON.stringify(stickyMessages, null, 2));
+  } catch (err) {
+    logger.error('Failed to save sticky messages', err);
+  }
+}
+
 async function purgeMessages(message, args) {
   const hasStaffRole = message.member.roles.cache.has(STAFF_ROLE_ID);
   const hasManageMessages = message.member.permissions?.has(PermissionsBitField.Flags.ManageMessages) || message.member.permissions?.has(PermissionsBitField.Flags.Administrator);
@@ -1405,6 +1452,184 @@ async function sendUserInfo(message) {
     .setTimestamp();
 
   await message.channel.send({ embeds: [embed] });
+}
+
+async function handleStickyMessageCommand(message, args) {
+  if (!isStaffModerator(message, PermissionsBitField.Flags.ManageMessages)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const subcommand = args[1]?.toLowerCase();
+
+  if (subcommand === 'add') {
+    await addStickyMessage(message);
+    return;
+  }
+
+  if (subcommand === 'list') {
+    await listStickyMessages(message);
+    return;
+  }
+
+  if (subcommand === 'view') {
+    await viewStickyMessage(message);
+    return;
+  }
+
+  if (subcommand === 'remove') {
+    await removeStickyMessage(message);
+    return;
+  }
+
+  await message.reply(
+    `Use: \`${PREFIX}stickymessage add #channel message\`\n` +
+    `\`${PREFIX}stickymessage list\`\n` +
+    `\`${PREFIX}stickymessage view #channel\`\n` +
+    `\`${PREFIX}stickymessage remove #channel\``
+  );
+}
+
+async function addStickyMessage(message) {
+  const channel = message.mentions.channels.first();
+
+  if (!channel) {
+    await message.reply(`Use: \`${PREFIX}stickymessage add #channel message\``);
+    return;
+  }
+
+  const stickyText = message.content
+    .slice(`${PREFIX}stickymessage add`.length)
+    .replace(`<#${channel.id}>`, '')
+    .trim();
+
+  if (!stickyText) {
+    await message.reply(`Use: \`${PREFIX}stickymessage add #channel message\``);
+    return;
+  }
+
+  stickyMessages[channel.id] = {
+    channelId: channel.id,
+    content: stickyText,
+    createdBy: message.author.id,
+    updatedAt: new Date().toISOString(),
+  };
+
+  saveStickyMessages();
+
+  if (supabase.saveStickyMessage) {
+    await supabase.saveStickyMessage(channel.id, stickyMessages[channel.id])
+      .catch(err => logger.error('Failed to save sticky to Supabase', err));
+  }
+
+  await message.reply(`✅ Sticky message saved for ${channel}.`);
+}
+
+async function listStickyMessages(message) {
+  const entries = Object.values(stickyMessages);
+
+  if (entries.length === 0) {
+    await message.reply('No sticky messages are currently configured.');
+    return;
+  }
+
+  const lines = entries.map((sticky, index) => {
+    const preview = sticky.content.length > 75
+      ? `${sticky.content.slice(0, 75)}...`
+      : sticky.content;
+
+    return `**${index + 1}.** <#${sticky.channelId}> — ${preview}`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle('📌 Sticky Messages')
+    .setDescription(lines.join('\n'))
+    .setColor(0xff7aa8)
+    .setTimestamp();
+
+  await message.channel.send({ embeds: [embed] });
+}
+
+async function viewStickyMessage(message) {
+  const channel = message.mentions.channels.first();
+
+  if (!channel) {
+    await message.reply(`Use: \`${PREFIX}stickymessage view #channel\``);
+    return;
+  }
+
+  const sticky = stickyMessages[channel.id];
+
+  if (!sticky) {
+    await message.reply(`No sticky message is configured for ${channel}.`);
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('📌 Sticky Message')
+    .addFields(
+      { name: 'Channel', value: `${channel}`, inline: false },
+      { name: 'Content', value: sticky.content.slice(0, 1024), inline: false }
+    )
+    .setColor(0xff7aa8)
+    .setTimestamp();
+
+  await message.channel.send({ embeds: [embed] });
+}
+
+async function removeStickyMessage(message) {
+  const channel = message.mentions.channels.first();
+
+  if (!channel) {
+    await message.reply(`Use: \`${PREFIX}stickymessage remove #channel\``);
+    return;
+  }
+
+  if (!stickyMessages[channel.id]) {
+    await message.reply(`No sticky message is configured for ${channel}.`);
+    return;
+  }
+
+  delete stickyMessages[channel.id];
+  saveStickyMessages();
+
+  if (supabase.deleteStickyMessage) {
+    await supabase.deleteStickyMessage(channel.id)
+      .catch(err => logger.error('Failed to delete sticky from Supabase', err));
+  }
+
+  await message.reply(`✅ Removed sticky message from ${channel}.`);
+}
+
+async function handleStickyMessageActivity(message) {
+  if (!message.guild) return;
+
+  const sticky = stickyMessages[message.channel.id];
+  if (!sticky) return;
+
+  if (sticky.lastMessageId === message.id) return;
+
+  try {
+    if (sticky.stickyMessageId) {
+      const oldMessage = await message.channel.messages.fetch(sticky.stickyMessageId).catch(() => null);
+      if (oldMessage) {
+        await oldMessage.delete().catch(() => null);
+      }
+    }
+
+    const sent = await message.channel.send(sticky.content);
+
+    sticky.stickyMessageId = sent.id;
+    sticky.lastMessageId = message.id;
+
+    saveStickyMessages();
+    if (supabase.saveStickyMessage) {
+      await supabase.saveStickyMessage(message.channel.id, sticky)
+        .catch(err => logger.error('Failed to update sticky message ID in Supabase', err));
+    }
+  } catch (err) {
+    logger.error('Failed to post sticky message', err);
+  }
 }
 
 async function sendTweetPost(message) {
