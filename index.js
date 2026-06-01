@@ -725,9 +725,7 @@ async function handleBoosterRemoved(member) {
     }
   }
 
-  const logChannel = BOOST_LOG_CHANNEL_ID
-    ? await member.guild.channels.fetch(BOOST_LOG_CHANNEL_ID).catch(() => null)
-    : null;
+  const logChannel = await member.guild.channels.fetch('1511119505684955256').catch(() => null);
 
   if (logChannel) {
     const embed = new EmbedBuilder()
@@ -744,7 +742,6 @@ async function handleBoosterRemoved(member) {
     await logChannel.send({ embeds: [embed] });
   }
 
-  await member.send('♡ it looks like you are no longer boosting FVGNATION, so your verified booster perks were removed. If this is a mistake, please contact staff.').catch(() => null);
 }
 
 async function sendHelpEmbed(message) {
@@ -1120,10 +1117,14 @@ async function banUser(message, args) {
     return;
   }
 
-  const target = message.mentions.members.first();
+  let target = message.mentions.members.first();
+
+  if (!target && args[1]) {
+    target = await message.guild.members.fetch(args[1]).catch(() => null);
+  }
 
   if (!target) {
-    await message.reply(`Use: \`${PREFIX}ban @user reason\``);
+    await message.reply(`Use: \`${PREFIX}ban @user reason\` or \`${PREFIX}ban userID reason\``);
     return;
   }
 
