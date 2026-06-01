@@ -13,4 +13,8 @@ module.exports = {
   BOOSTER_ROLE_IDS: (getEnv('BOOSTER_ROLE_IDS') || '1509295991906369658,1509166982656950292').split(',').map(s => s.trim()),
   BOOST_LOG_CHANNEL_ID: getEnv('BOOST_LOG_CHANNEL_ID', '1510874261575700501'),
   BOOST_DATA_FILE: getEnv('BOOST_DATA_FILE', path.join(__dirname, 'boosts.json')),
+  SUPABASE_URL: getEnv('SUPABASE_URL', null),
+  SUPABASE_KEY: getEnv('SUPABASE_KEY', null),
+  SUPABASE_BOOSTER_TABLE: getEnv('SUPABASE_BOOSTER_TABLE', 'booster_list'),
+  SUPABASE_AUTO_SYNC: getEnv('SUPABASE_AUTO_SYNC', 'false'),
 };

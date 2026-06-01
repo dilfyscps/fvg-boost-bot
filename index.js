@@ -3,6 +3,7 @@ const path = require('path');
 const config = require('./config');
 const storage = require('./storage');
 const logger = require('./logger');
+const supabase = require('./supabase');
 const {
   Client,
   GatewayIntentBits,
@@ -74,7 +75,7 @@ try {
 let boostData = storage.loadBoostData(BOOST_DATA_FILE);
 let twitterFeeds = loadTwitterFeeds();
 
-client.once('ready', () => {
+client.once('ready', async () => {
   logger.info(`Logged in as ${client.user.tag}`);
 
   try {
@@ -88,6 +89,30 @@ client.once('ready', () => {
     });
   } catch (err) {
     logger.warn('Failed to set presence', err);
+  }
+
+  if (config.SUPABASE_AUTO_SYNC === 'true' && supabase.isSupabaseConfigured()) {
+    try {
+      const remoteBoosters = await supabase.loadBoosterList();
+      remoteBoosters.forEach((row) => {
+        if (!row || !row.user_id) return;
+        boostData[row.user_id] = {
+          ...(boostData[row.user_id] || {}),
+          username: row.username || boostData[row.user_id]?.username,
+          boosts: row.boosts ?? boostData[row.user_id]?.boosts ?? 0,
+          verifiedBoosts: row.verified_boosts ?? boostData[row.user_id]?.verifiedBoosts ?? 0,
+          verified: row.verified ?? boostData[row.user_id]?.verified ?? false,
+          verifiedAt: row.verified_at || boostData[row.user_id]?.verifiedAt,
+          verifiedBy: row.verified_by || boostData[row.user_id]?.verifiedBy,
+          lastBoostedAt: row.last_boosted_at || boostData[row.user_id]?.lastBoostedAt,
+          lostBoostAlerted: row.lost_boost_alerted ?? boostData[row.user_id]?.lostBoostAlerted ?? false,
+        };
+      });
+      storage.saveBoostData(BOOST_DATA_FILE, boostData);
+      logger.info(`Loaded ${remoteBoosters.length} boosters from Supabase`);
+    } catch (err) {
+      logger.error('Failed to sync booster list from Supabase on startup', err);
+    }
   }
 
   startTwitterFeedWatcher();
@@ -1974,6 +1999,17 @@ async function sendBoosterList(message) {
     return;
   }
 
+  let supabaseStatus = 'Supabase is not configured.';
+  if (supabase.isSupabaseConfigured()) {
+    try {
+      const result = await supabase.saveBoosterList(boostData);
+      supabaseStatus = `Saved ${result.count} booster record(s) to Supabase.`;
+    } catch (err) {
+      supabaseStatus = 'Failed to save booster list to Supabase.';
+      logger.error('Failed to save booster list to Supabase', err);
+    }
+  }
+
   const lines = boosters.slice(0, 25).map(([userId, data], index) => {
     const verifiedAt = data.verifiedAt
       ? ` — verified <t:${Math.floor(new Date(data.verifiedAt).getTime() / 1000)}:R>`
@@ -1985,6 +2021,7 @@ async function sendBoosterList(message) {
   const embed = new EmbedBuilder()
     .setTitle('💎 Verified Booster List')
     .setDescription(lines.join('\n'))
+    .addFields({ name: 'Supabase', value: supabaseStatus, inline: false })
     .setFooter({ text: boosters.length > 25 ? `Showing 25 of ${boosters.length}` : `${boosters.length} verified booster(s)` })
     .setColor(0xff7aa8)
     .setTimestamp();
