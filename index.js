@@ -273,6 +273,11 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  if (command === `${PREFIX}boosterlist`) {
+    await sendBoosterList(message);
+    return;
+  }
+
   if (command === `${PREFIX}modpending`) {
   await message.reply(`📋 Open mod applications: ${modApplicationChannels.size}`);
   return;
@@ -483,7 +488,7 @@ async function sendHelpEmbed(message) {
     {
       id: 'boosting',
       title: 'Boosting',
-      body: `\`${PREFIX}verifyboost\` (DM) — Start 2x boost verification flow\n\`${PREFIX}boostcount @user\` — Show tracked boosts for a user\n\`${PREFIX}testboostdm @user\` — (Staff) Send test verification DM`,
+      body: `\`${PREFIX}verifyboost\` (DM) — Start 2x boost verification flow\n\`${PREFIX}boostcount @user\` — Show tracked boosts for a user\n\`${PREFIX}addboost @user amount\` — (Staff) Set verified boost count\n\`${PREFIX}boosterlist\` — (Staff) View all verified boosters\n\`${PREFIX}testboostdm @user\` — (Staff) Send test verification DM`,
     },
     {
       id: 'moderation',
@@ -907,6 +912,39 @@ async function sendBoostCount(message) {
   const embed = new EmbedBuilder()
     .setTitle('Tracked Boost Count')
     .setDescription(`${target} has **${count}** tracked boost message(s).`)
+    .setColor(0xff7aa8)
+    .setTimestamp();
+
+  await message.channel.send({ embeds: [embed] });
+}
+
+async function sendBoosterList(message) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const boosters = Object.entries(boostData)
+    .filter(([, data]) => data?.verifiedBoosts > 0)
+    .sort((a, b) => (b[1].verifiedBoosts || 0) - (a[1].verifiedBoosts || 0));
+
+  if (boosters.length === 0) {
+    await message.reply('♡ no verified boosters found.');
+    return;
+  }
+
+  const lines = boosters.slice(0, 25).map(([userId, data], index) => {
+    const verifiedAt = data.verifiedAt
+      ? ` — verified <t:${Math.floor(new Date(data.verifiedAt).getTime() / 1000)}:R>`
+      : '';
+
+    return `**${index + 1}.** <@${userId}> — **${data.verifiedBoosts}** boost(s)${verifiedAt}`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle('💎 Verified Booster List')
+    .setDescription(lines.join('\n'))
+    .setFooter({ text: boosters.length > 25 ? `Showing 25 of ${boosters.length}` : `${boosters.length} verified booster(s)` })
     .setColor(0xff7aa8)
     .setTimestamp();
 
