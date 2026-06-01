@@ -3,7 +3,17 @@ const path = require('path');
 const config = require('./config');
 const storage = require('./storage');
 const logger = require('./logger');
-const supabase = require('./supabase');
+let supabase = {
+  isSupabaseConfigured: () => false,
+  loadBoosterList: async () => [],
+  saveBoosterList: async () => ({ count: 0 }),
+};
+
+try {
+  supabase = require('./supabase');
+} catch (err) {
+  logger.warn('Supabase module could not be loaded. Booster data will use local JSON only.', err);
+}
 const {
   Client,
   GatewayIntentBits,
@@ -312,8 +322,57 @@ client.on('messageCreate', async (message) => {
 
     storage.saveBoostData(BOOST_DATA_FILE, boostData);
 
+    if (supabase.isSupabaseConfigured()) {
+      try {
+        await supabase.saveBoosterList(boostData);
+      } catch (err) {
+        logger.error('Failed to save addboost change to Supabase', err);
+      }
+    }
+
     logger.info(`addboost: ${message.author.tag} set ${target.tag} -> ${amount}`);
     await message.reply(`✅ Set ${target.tag}'s verified boost count to **${amount}**.`);
+    return;
+  }
+
+  if (command === `${PREFIX}removeboost`) {
+    const hasStaffRole = message.member.roles.cache.has(STAFF_ROLE_ID);
+    const hasManage = message.member.permissions?.has(PermissionsBitField.Flags.ManageGuild) || message.member.permissions?.has(PermissionsBitField.Flags.Administrator);
+
+    if (!hasStaffRole && !hasManage) {
+      await message.reply('You do not have permission to use this command.');
+      return;
+    }
+
+    const target = message.mentions.users.first();
+
+    if (!target) {
+      await message.reply(`Use: \`${PREFIX}removeboost @user\``);
+      return;
+    }
+
+    boostData[target.id] = {
+      ...(boostData[target.id] || {}),
+      boosts: 0,
+      verifiedBoosts: 0,
+      verified: false,
+      username: target.tag,
+      removedAt: new Date().toISOString(),
+      removedBy: message.author.id,
+      lostBoostAlerted: true,
+    };
+
+    storage.saveBoostData(BOOST_DATA_FILE, boostData);
+
+    if (supabase.isSupabaseConfigured()) {
+      try {
+        await supabase.saveBoosterList(boostData);
+      } catch (err) {
+        logger.error('Failed to save removeboost change to Supabase', err);
+      }
+    }
+
+    await message.reply(`✅ Removed ${target.tag} from the verified booster list.`);
     return;
   }
 
@@ -637,7 +696,7 @@ async function sendHelpEmbed(message) {
     {
       id: 'boosting',
       title: 'Boosting',
-      body: `\`${PREFIX}verifyboost\` (DM) — Start 2x boost verification flow\n\`${PREFIX}boostcount @user\` — Show tracked boosts for a user\n\`${PREFIX}addboost @user amount\` — (Staff) Set verified boost count\n\`${PREFIX}boosterlist\` — (Staff) View all verified boosters\n\`${PREFIX}testboostdm @user\` — (Staff) Send test verification DM`,
+      body: `\`${PREFIX}verifyboost\` (DM) — Start 2x boost verification flow\n\`${PREFIX}boostcount @user\` — Show tracked boosts for a user\n\`${PREFIX}addboost @user amount\` — (Staff) Set verified boost count\n\`${PREFIX}boosterlist\` — (Staff) View all verified boosters\n\`${PREFIX}removeboost @user\` — (Staff) Remove a verified booster\n\`${PREFIX}testboostdm @user\` — (Staff) Send test verification DM`,
     },
     {
       id: 'moderation',
@@ -672,7 +731,7 @@ async function sendHelpEmbed(message) {
 \`${PREFIX}twitterlist\` — (Staff) View watched X/Twitter feeds
 \`${PREFIX}twitterremove username\` — (Staff) Remove a watched X/Twitter feed
 \`${PREFIX}twittercheck\` — (Staff) Manually check watched feeds now
-\`${PREFIX}tweetpost #channel tweetLink optional text\` — (Staff) Send a clean X/Twitter embed with a button`,
+\`${PREFIX}tweetpost #channel tweetLink\` — (Staff) Extract and send only the tweet image/video file`,
     },
   ];
 
@@ -1267,53 +1326,53 @@ async function sendTweetPost(message) {
 
   const content = message.content.slice(`${PREFIX}tweetpost`.length).trim();
   const mentionedChannel = message.mentions.channels.first();
-  const tweetUrlMatch = content.match(/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/[^\s]+/i);
+  const tweetUrls = (content.match(/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/[^\s]+/gi) || []).map(normalizeTweetUrl);
 
-  if (!mentionedChannel || !tweetUrlMatch) {
+  if (!mentionedChannel || tweetUrls.length === 0) {
     await message.reply(`Use: \`${PREFIX}tweetpost #channel tweetLink\``);
     return;
   }
 
-  const tweetUrl = normalizeTweetUrl(tweetUrlMatch[0]);
   const targetChannel = mentionedChannel;
-  const tweetInfo = parseTweetUrl(tweetUrl);
+  let sentCount = 0;
 
-  if (!tweetInfo.statusId) {
-    await message.reply('That does not look like a valid X/Twitter status link.');
-    return;
+  for (const tweetUrl of tweetUrls) {
+    const tweetInfo = parseTweetUrl(tweetUrl);
+
+    if (!tweetInfo.statusId) {
+      continue;
+    }
+
+    const tweetDetails = await fetchTweetDetails(tweetInfo.statusId).catch(err => {
+      logger.warn('Failed to fetch tweet details for manual tweetpost', err);
+      return null;
+    });
+
+    const media = tweetDetails?.media || {};
+    const fileUrl = media.videoUrl || media.imageUrl;
+
+    if (!fileUrl) {
+      continue;
+    }
+
+    const fileName = media.videoUrl ? 'tweet-video.mp4' : 'tweet-image.jpg';
+
+    await targetChannel.send({
+      files: [
+        {
+          attachment: fileUrl,
+          name: fileName,
+        },
+      ],
+    });
+
+    sentCount += 1;
   }
-
-  const tweetDetails = await fetchTweetDetails(tweetInfo.statusId).catch(err => {
-    logger.warn('Failed to fetch tweet details for manual tweetpost', err);
-    return null;
-  });
-
-  const media = tweetDetails?.media || {};
-  console.log('TWEET DETAILS:', JSON.stringify(tweetDetails, null, 2));
-  console.log('TWEET MEDIA:', media);
-
-  const fileUrl = media.videoUrl || media.imageUrl;
-
-  if (!fileUrl) {
-    await message.reply('I could not extract an image or video file from that tweet.');
-    return;
-  }
-
-  const fileName = media.videoUrl ? 'tweet-video.mp4' : 'tweet-image.jpg';
-
-  await targetChannel.send({
-    files: [
-      {
-        attachment: fileUrl,
-        name: fileName,
-      },
-    ],
-  });
 
   if (targetChannel.id !== message.channel.id) {
-    await message.reply(`✅ Tweet media sent to ${targetChannel}.`);
+    await message.reply(`✅ Sent ${sentCount} tweet media file(s) to ${targetChannel}.`);
   } else {
-    await message.react('✅').catch(() => null);
+    await message.react(sentCount > 0 ? '✅' : '❌').catch(() => null);
   }
 }
 
@@ -1392,6 +1451,45 @@ function extractFxTweetMedia(tweet) {
     imageUrl: firstVideo?.thumbnail_url || firstPhoto?.url || null,
     videoUrl: firstVideo?.url || null,
   };
+}
+
+function extractTweetMedia(tweetData) {
+  const mediaItems = [
+    ...(Array.isArray(tweetData.mediaDetails) ? tweetData.mediaDetails : []),
+    ...(Array.isArray(tweetData.photos) ? tweetData.photos : []),
+    ...(Array.isArray(tweetData.videos) ? tweetData.videos : []),
+    ...(Array.isArray(tweetData.extended_entities?.media) ? tweetData.extended_entities.media : []),
+    ...(Array.isArray(tweetData.entities?.media) ? tweetData.entities.media : []),
+  ];
+
+  const result = {
+    imageUrl: null,
+    videoUrl: null,
+  };
+
+  for (const item of mediaItems) {
+    const imageUrl = item.media_url_https || item.media_url || item.url || item.image_url || item.thumbnail_url;
+
+    if (!result.imageUrl && imageUrl) {
+      result.imageUrl = imageUrl;
+    }
+
+    const variants = [
+      ...(Array.isArray(item.video_info?.variants) ? item.video_info.variants : []),
+      ...(Array.isArray(item.video_variants) ? item.video_variants : []),
+      ...(Array.isArray(item.variants) ? item.variants : []),
+    ];
+
+    const mp4Variants = variants
+      .filter(variant => variant.url && (!variant.content_type || variant.content_type === 'video/mp4' || variant.url.includes('.mp4')))
+      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+    if (!result.videoUrl && mp4Variants[0]?.url) {
+      result.videoUrl = mp4Variants[0].url;
+    }
+  }
+
+  return result;
 }
 
 async function sendSayMessage(message) {

@@ -8,15 +8,18 @@ const {
   SUPABASE_BOOSTER_TABLE,
 } = config;
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabase = SUPABASE_URL && SUPABASE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_KEY)
+  : null;
 
 function isSupabaseConfigured() {
-  return Boolean(SUPABASE_URL && SUPABASE_KEY && SUPABASE_BOOSTER_TABLE);
+  return Boolean(supabase && SUPABASE_BOOSTER_TABLE);
 }
 
 async function saveBoosterList(boostData) {
   if (!isSupabaseConfigured()) {
-    throw new Error('Supabase is not configured. Set SUPABASE_URL, SUPABASE_KEY, and SUPABASE_BOOSTER_TABLE.');
+    logger.warn('Supabase is not configured. Skipping booster save.');
+    return { count: 0 };
   }
 
   const boosters = Object.entries(boostData)
@@ -51,7 +54,8 @@ async function saveBoosterList(boostData) {
 
 async function loadBoosterList() {
   if (!isSupabaseConfigured()) {
-    throw new Error('Supabase is not configured. Set SUPABASE_URL, SUPABASE_KEY, and SUPABASE_BOOSTER_TABLE.');
+    logger.warn('Supabase is not configured. Skipping booster load.');
+    return [];
   }
 
   const { data, error } = await supabase

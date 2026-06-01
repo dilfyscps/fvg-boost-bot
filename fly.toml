@@ -1,0 +1,4 @@
+app = "fvg-boost-bot"
+
+[processes]
+app = "npm start"
