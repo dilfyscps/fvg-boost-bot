@@ -1,10 +1,10 @@
-# fly.toml app configuration file generated for app-holy-haze-4044 on 2026-06-01T19:10:54Z
+# fly.toml app configuration file generated for fvg-boost-bot on 2026-06-02T19:27:24Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'app-holy-haze-4044'
-primary_region = 'iad'
+app = 'fvg-boost-bot'
+primary_region = 'lax'
 
 [build]
 
