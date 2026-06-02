@@ -188,7 +188,11 @@ client.once('ready', async () => {
     }
   }
 
-  startTwitterFeedWatcher();
+  if (typeof startTwitterFeedWatcher === 'function') {
+    startTwitterFeedWatcher();
+  } else {
+    logger.warn('Twitter feed watcher is not available; skipping automatic Twitter feed checks.');
+  }
 });
 
 client.on('messageCreate', async (message) => {
