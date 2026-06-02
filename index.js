@@ -74,11 +74,13 @@ const modApplications = new Map();
 
 const modApplicationChannels = new Map();
 
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+
 const WARNINGS_FILE = path.join(__dirname, 'warnings.json');
 const TWITTER_FEEDS_FILE = path.join(__dirname, 'twitter-feeds.json');
 const STICKY_MESSAGES_FILE = path.join(__dirname, 'sticky-messages.json');
 const AUTORESPONDERS_FILE = path.join(__dirname, 'autoresponders.json');
-const DATA_DIR = process.env.DATA_DIR || __dirname;
+const CHANNEL_PRESETS_FILE = path.join(DATA_DIR, 'channel-presets.json');
 const LASTFM_USERS_FILE = path.join(DATA_DIR, 'lastfm-users.json');
 
 let warnings = {};
@@ -97,6 +99,7 @@ let boostData = storage.loadBoostData(BOOST_DATA_FILE);
 let twitterFeeds = loadTwitterFeeds();
 let stickyMessages = loadStickyMessages();
 let autoresponders = loadAutoresponders();
+let channelPresets = loadChannelPresets();
 let lastfmUsers = loadLastfmUsers();
 
 if (supabase.loadStickyMessages) {
@@ -340,70 +343,53 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+
   if (command === `${PREFIX}p`) {
     await sendLastfmProfile(message);
     return;
   }
 
+  if (
+    command === `${PREFIX}profile` ||
+    command === `${PREFIX}stats` ||
+    command === `${PREFIX}u`
+  ) {
+    await sendLastfmProfile(message);
+    return;
+  }
+
+  if (command === `${PREFIX}lastfm` || command === `${PREFIX}lfm`) {
+    await sendLastfmProfile(message);
+    return;
+  }
+
   if (command === `${PREFIX}ta`) {
-    await sendLastfmTopArtists(message, [command, 'overall']);
+    await sendLastfmTopArtists(message, args);
     return;
   }
 
   if (command === `${PREFIX}tt`) {
-    await sendLastfmTopTracks(message, [command, 'overall']);
+    await sendLastfmTopTracks(message, args);
     return;
   }
 
+
   if (command === `${PREFIX}tal`) {
-    await sendLastfmTopAlbums(message, [command, 'overall']);
+    await sendLastfmTopAlbums(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}tab`) {
+    await sendLastfmTopAlbums(message, args);
     return;
   }
 
   if (command === `${PREFIX}wk`) {
-    await sendLastfmTopArtists(message, [command, 'week']);
+    await sendLastfmWhoKnows(message, args);
     return;
   }
 
-  if (command === `${PREFIX}mo`) {
-    await sendLastfmTopArtists(message, [command, 'month']);
-    return;
-  }
 
-  if (command === `${PREFIX}all`) {
-    await sendLastfmTopArtists(message, [command, 'overall']);
-    return;
-  }
-
-  if (command === `${PREFIX}twk`) {
-    await sendLastfmTopTracks(message, [command, 'week']);
-    return;
-  }
-
-  if (command === `${PREFIX}tmo`) {
-    await sendLastfmTopTracks(message, [command, 'month']);
-    return;
-  }
-
-  if (command === `${PREFIX}tall`) {
-    await sendLastfmTopTracks(message, [command, 'overall']);
-    return;
-  }
-
-  if (command === `${PREFIX}awk`) {
-    await sendLastfmTopAlbums(message, [command, 'week']);
-    return;
-  }
-
-  if (command === `${PREFIX}amo`) {
-    await sendLastfmTopAlbums(message, [command, 'month']);
-    return;
-  }
-
-  if (command === `${PREFIX}aall`) {
-    await sendLastfmTopAlbums(message, [command, 'overall']);
-    return;
-  }
 
   if (command === `${PREFIX}setfm`) {
     await setLastfmUser(message, args);
@@ -435,7 +421,7 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  if (command === `${PREFIX}taste`) {
+  if (command === `${PREFIX}taste` || command === `${PREFIX}t`) {
     await sendLastfmTaste(message);
     return;
   }
@@ -598,8 +584,13 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  if (command === `${PREFIX}tweetpost`) {
-    await sendTweetPost(message);
+  if (command === `${PREFIX}tweetpost` || command === `${PREFIX}tp`) {
+    await sendTweetPost(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}channelpreset` || command === `${PREFIX}cpreset`) {
+    await handleChannelPresetCommand(message, args);
     return;
   }
 
@@ -984,14 +975,16 @@ async function sendHelpEmbed(message) {
 \`${PREFIX}setfm username\` — Save your Last.fm username
 \`${PREFIX}fm\` — Show your current Last.fm track
 \`${PREFIX}np\` — Same as fm
-\`${PREFIX}recent [amount]\` — Show recent scrobbles
-\`${PREFIX}fmprofile\` — Show your Last.fm profile
-\`${PREFIX}topartists [week|month|overall]\` — Show top artists
-\`${PREFIX}toptracks [week|month|overall]\` — Show top tracks
-\`${PREFIX}topalbums [week|month|overall]\` — Show top albums
-\`${PREFIX}taste @user\` — Compare music taste with another saved user
-\`${PREFIX}whoknows artist\` — Server leaderboard for an artist
-Aliases: \`${PREFIX}f\`, \`${PREFIX}r\`, \`${PREFIX}p\`, \`${PREFIX}ta\`, \`${PREFIX}tt\`, \`${PREFIX}tal\`, \`${PREFIX}wk\`, \`${PREFIX}mo\`, \`${PREFIX}all\`, \`${PREFIX}twk\`, \`${PREFIX}tmo\`, \`${PREFIX}tall\`, \`${PREFIX}awk\`, \`${PREFIX}amo\`, \`${PREFIX}aall\`
+\`${PREFIX}recent\` / \`${PREFIX}r\` — Show recent scrobbles
+\`${PREFIX}profile\` / \`${PREFIX}stats\` / \`${PREFIX}u\` — Show your Last.fm profile
+\`${PREFIX}lastfm\` / \`${PREFIX}lfm\` — Show your Last.fm profile
+\`${PREFIX}topartists\` / \`${PREFIX}ta\` — Show top artists
+\`${PREFIX}toptracks\` / \`${PREFIX}tt\` — Show top tracks
+\`${PREFIX}topalbums\` / \`${PREFIX}tab\` — Show top albums
+\`${PREFIX}taste @user\` / \`${PREFIX}t @user\` — Compare music taste
+\`${PREFIX}whoknows artist\` / \`${PREFIX}wk artist\` — Server artist leaderboard
+Use time periods with top commands: \`${PREFIX}ta w\`, \`${PREFIX}tt m\`, \`${PREFIX}tab a\`
+Periods: \`w\` weekly, \`m\` monthly, \`a\` alltime
 \`${PREFIX}userinfo @user\` — Show basic user info`,
     },
     {
@@ -1035,7 +1028,10 @@ Aliases: \`${PREFIX}f\`, \`${PREFIX}r\`, \`${PREFIX}p\`, \`${PREFIX}ta\`, \`${PR
 \`${PREFIX}twitterlist\` — (Staff) View watched X/Twitter feeds
 \`${PREFIX}twitterremove username\` — (Staff) Remove a watched X/Twitter feed
 \`${PREFIX}twittercheck\` — (Staff) Manually check watched feeds now
-\`${PREFIX}tweetpost #channel tweetLink\` — (Staff) Extract and send only the tweet image/video file`,
+\`${PREFIX}tweetpost #channel tweetLink\` / \`${PREFIX}tp preset tweetLink\` — (Staff) Extract and send only the tweet image/video file
+\`${PREFIX}channelpreset set name #channel\` — (Staff) Save a channel preset
+\`${PREFIX}channelpreset list\` — (Staff) View channel presets
+\`${PREFIX}channelpreset delete name\` — (Staff) Delete a channel preset`,
     },
   ];
 
@@ -1134,6 +1130,101 @@ function saveTwitterFeeds() {
   } catch (err) {
     logger.error('Failed to save Twitter feeds', err);
   }
+}
+
+function loadChannelPresets() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+
+    if (fs.existsSync(CHANNEL_PRESETS_FILE)) {
+      return JSON.parse(fs.readFileSync(CHANNEL_PRESETS_FILE, 'utf8'));
+    }
+
+    fs.writeFileSync(CHANNEL_PRESETS_FILE, JSON.stringify({}, null, 2));
+    return {};
+  } catch (err) {
+    logger.error('Failed to load channel presets', err);
+    return {};
+  }
+}
+
+function saveChannelPresets() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(CHANNEL_PRESETS_FILE, JSON.stringify(channelPresets, null, 2));
+  } catch (err) {
+    logger.error('Failed to save channel presets', err);
+  }
+}
+
+async function handleChannelPresetCommand(message, args) {
+  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const subcommand = args[1]?.toLowerCase();
+
+  if (subcommand === 'set' || subcommand === 'add') {
+    const presetName = args[2]?.toLowerCase();
+    const channel = message.mentions.channels.first();
+
+    if (!presetName || !channel) {
+      await message.reply(`Use: \`${PREFIX}channelpreset set name #channel\``);
+      return;
+    }
+
+    channelPresets[presetName] = channel.id;
+    saveChannelPresets();
+
+    await message.reply(`✅ Saved preset **${presetName}** for ${channel}.`);
+    return;
+  }
+
+  if (subcommand === 'list') {
+    const entries = Object.entries(channelPresets || {});
+
+    if (!entries.length) {
+      await message.reply('No channel presets saved yet.');
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('Channel Presets')
+      .setDescription(entries.map(([name, channelId]) => `**${name}** → <#${channelId}>`).join('\n'))
+      .setColor(0xff7aa8)
+      .setTimestamp();
+
+    await message.channel.send({ embeds: [embed] });
+    return;
+  }
+
+  if (subcommand === 'delete' || subcommand === 'remove') {
+    const presetName = args[2]?.toLowerCase();
+
+    if (!presetName) {
+      await message.reply(`Use: \`${PREFIX}channelpreset delete name\``);
+      return;
+    }
+
+    if (!channelPresets[presetName]) {
+      await message.reply(`No preset found named **${presetName}**.`);
+      return;
+    }
+
+    delete channelPresets[presetName];
+    saveChannelPresets();
+
+    await message.reply(`✅ Deleted preset **${presetName}**.`);
+    return;
+  }
+
+  await message.reply(
+    `Use:\n` +
+    `\`${PREFIX}channelpreset set name #channel\`\n` +
+    `\`${PREFIX}channelpreset list\`\n` +
+    `\`${PREFIX}channelpreset delete name\``
+  );
 }
 
 function loadStickyMessages() {
@@ -1548,11 +1639,18 @@ async function sendLastfmTopArtists(message, args) {
     return;
   }
 
-  const periodArg = (args[1] || 'overall').toLowerCase();
+  const periodArg = (args[1] || 'w').toLowerCase();
   const periodMap = {
+    w: '7day',
     week: '7day',
+    weekly: '7day',
+    m: '1month',
     month: '1month',
-    overall: 'overall'
+    monthly: '1month',
+    a: 'overall',
+    all: 'overall',
+    alltime: 'overall',
+    overall: 'overall',
   };
 
   try {
@@ -1562,7 +1660,7 @@ async function sendLastfmTopArtists(message, args) {
         user: username,
         api_key: process.env.LASTFM_API_KEY,
         format: 'json',
-        period: periodMap[periodArg] || 'overall',
+        period: periodMap[periodArg] || '7day',
         limit: 10,
       },
     });
@@ -1570,7 +1668,7 @@ async function sendLastfmTopArtists(message, args) {
     const artists = data.topartists?.artist || [];
 
     const embed = new EmbedBuilder()
-      .setTitle(`${username}'s Top Artists (${periodArg})`)
+      .setTitle(`${username}'s Top Artists (${getLastfmPeriodLabel(periodArg)})`)
       .setDescription(
         artists.map((a, i) => `${i + 1}. **${a.name}** — ${a.playcount} plays`).join('\n')
       )
@@ -1585,22 +1683,36 @@ async function sendLastfmTopArtists(message, args) {
 
 function getLastfmPeriod(periodArg) {
   const periodMap = {
+    w: '7day',
     week: '7day',
+    weekly: '7day',
+    m: '1month',
     month: '1month',
+    monthly: '1month',
+    a: 'overall',
+    all: 'overall',
+    alltime: 'overall',
     overall: 'overall',
   };
 
-  return periodMap[(periodArg || 'overall').toLowerCase()] || 'overall';
+  return periodMap[(periodArg || 'weekly').toLowerCase()] || '7day';
 }
 
 function getLastfmPeriodLabel(periodArg) {
   const labelMap = {
-    week: 'week',
-    month: 'month',
-    overall: 'overall',
+    w: 'weekly',
+    week: 'weekly',
+    weekly: 'weekly',
+    m: 'monthly',
+    month: 'monthly',
+    monthly: 'monthly',
+    a: 'alltime',
+    all: 'alltime',
+    alltime: 'alltime',
+    overall: 'alltime',
   };
 
-  return labelMap[(periodArg || 'overall').toLowerCase()] || 'overall';
+  return labelMap[(periodArg || 'weekly').toLowerCase()] || 'weekly';
 }
 
 async function sendLastfmTopTracks(message, args) {
@@ -1611,8 +1723,8 @@ async function sendLastfmTopTracks(message, args) {
     return;
   }
 
-  const period = getLastfmPeriod(args[1]);
-  const periodLabel = getLastfmPeriodLabel(args[1]);
+  const period = getLastfmPeriod(args[1] || 'w');
+  const periodLabel = getLastfmPeriodLabel(args[1] || 'w');
 
   try {
     const { data } = await axios.get('https://ws.audioscrobbler.com/2.0/', {
@@ -1655,8 +1767,8 @@ async function sendLastfmTopAlbums(message, args) {
     return;
   }
 
-  const period = getLastfmPeriod(args[1]);
-  const periodLabel = getLastfmPeriodLabel(args[1]);
+  const period = getLastfmPeriod(args[1] || 'w');
+  const periodLabel = getLastfmPeriodLabel(args[1] || 'w');
 
   try {
     const { data } = await axios.get('https://ws.audioscrobbler.com/2.0/', {
@@ -2451,22 +2563,27 @@ async function handleAutoresponder(message) {
   await message.channel.send(response);
 }
 
-async function sendTweetPost(message) {
+async function sendTweetPost(message, args) {
   if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
     await message.reply('You do not have permission to use this command.');
     return;
   }
 
-  const content = message.content.slice(`${PREFIX}tweetpost`.length).trim();
+  const content = args.slice(1).join(' ').trim();
+  const presetName = args[1]?.toLowerCase();
   const mentionedChannel = message.mentions.channels.first();
+  const presetChannelId = presetName ? channelPresets?.[presetName] : null;
+  const presetChannel = presetChannelId ? await message.guild.channels.fetch(presetChannelId).catch(() => null) : null;
+  const targetChannel = mentionedChannel || presetChannel;
   const tweetUrls = (content.match(/https?:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/[^\s]+/gi) || []).map(normalizeTweetUrl);
 
-  if (!mentionedChannel || tweetUrls.length === 0) {
-    await message.reply(`Use: \`${PREFIX}tweetpost #channel tweetLink\``);
+  if (!targetChannel || tweetUrls.length === 0) {
+    await message.reply(
+      `Use: \`${PREFIX}tweetpost #channel tweetLink\` or \`${PREFIX}tp preset tweetLink\`\n` +
+      `Save presets with: \`${PREFIX}channelpreset set name #channel\``
+    );
     return;
   }
-
-  const targetChannel = mentionedChannel;
   let sentCount = 0;
 
   for (const tweetUrl of tweetUrls) {
@@ -2481,25 +2598,19 @@ async function sendTweetPost(message) {
       return null;
     });
 
-    const media = tweetDetails?.media || {};
-    const fileUrl = media.videoUrl || media.imageUrl;
+    const mediaFiles = getTweetMediaFiles(tweetDetails);
 
-    if (!fileUrl) {
+    if (!mediaFiles.length) {
       continue;
     }
 
-    const fileName = media.videoUrl ? 'tweet-video.mp4' : 'tweet-image.jpg';
+    for (const file of mediaFiles) {
+      await targetChannel.send({
+        files: [file],
+      });
 
-    await targetChannel.send({
-      files: [
-        {
-          attachment: fileUrl,
-          name: fileName,
-        },
-      ],
-    });
-
-    sentCount += 1;
+      sentCount += 1;
+    }
   }
 
   if (targetChannel.id !== message.channel.id) {
@@ -2507,6 +2618,52 @@ async function sendTweetPost(message) {
   } else {
     await message.react(sentCount > 0 ? '✅' : '❌').catch(() => null);
   }
+}
+
+function getTweetMediaFiles(tweetDetails) {
+  const tweet = tweetDetails?.tweet || tweetDetails;
+  const media = tweet?.media || tweetDetails?.media || {};
+  const files = [];
+
+  const addFile = (url, name) => {
+    if (!url || files.some(file => file.attachment === url)) return;
+
+    files.push({
+      attachment: url,
+      name,
+    });
+  };
+
+  if (Array.isArray(media.all)) {
+    media.all.forEach((item, index) => {
+      const videoUrl = item.url || item.video_url || item.videoUrl;
+      const imageUrl = item.url || item.image_url || item.imageUrl;
+      const type = item.type || '';
+
+      if (type.includes('video') || videoUrl?.includes('.mp4')) {
+        addFile(videoUrl, `tweet-video-${index + 1}.mp4`);
+      } else {
+        addFile(imageUrl, `tweet-image-${index + 1}.jpg`);
+      }
+    });
+  }
+
+  if (Array.isArray(media.photos)) {
+    media.photos.forEach((photo, index) => {
+      addFile(photo.url || photo.image_url || photo.imageUrl, `tweet-image-${index + 1}.jpg`);
+    });
+  }
+
+  if (Array.isArray(media.videos)) {
+    media.videos.forEach((video, index) => {
+      addFile(video.url || video.video_url || video.videoUrl, `tweet-video-${index + 1}.mp4`);
+    });
+  }
+
+  addFile(media.videoUrl || media.video_url, 'tweet-video.mp4');
+  addFile(media.imageUrl || media.image_url, 'tweet-image.jpg');
+
+  return files;
 }
 
 function normalizeTweetUrl(url) {
@@ -2532,857 +2689,37 @@ async function fetchTweetDetails(statusId) {
       'User-Agent': 'fvgify-discord-bot/1.0',
       Accept: 'application/json',
     },
-  }).catch(err => {
-    logger.warn('FxTwitter request failed before response', err);
-    return null;
-  });
-
-  if (fxResponse && fxResponse.ok) {
-    const fxData = await fxResponse.json();
-    const tweet = fxData.tweet || fxData;
-    const media = extractFxTweetMedia(tweet);
-
-    return {
-      text: tweet.text || '',
-      username: tweet.author?.screen_name || tweet.author?.name || null,
-      createdAt: tweet.created_at || (tweet.created_timestamp ? new Date(tweet.created_timestamp * 1000).toISOString() : null),
-      media,
-    };
+  }).catch(err => null);
+  if (!fxResponse || !fxResponse.ok) {
+    return {};
   }
-
-  const response = await fetch(`https://cdn.syndication.twimg.com/tweet-result?id=${statusId}&lang=en`, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0',
-      Accept: 'application/json,text/plain,*/*',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Tweet details request failed with status ${response.status}`);
-  }
-
-  const data = await response.json();
-  const media = extractTweetMedia(data);
-
-  return {
-    text: data.text || data.full_text || '',
-    username: data.user?.screen_name || data.user?.name || data.user?.id_str || null,
-    createdAt: data.created_at || data.createdAt || null,
-    media,
-  };
-}
-
-function extractFxTweetMedia(tweet) {
+  const data = await fxResponse.json();
+  // Compose media with all, photos, videos, plus imageUrl/videoUrl for legacy compatibility
+  const tweet = data.tweet || data;
   const media = tweet.media || {};
-  const videos = Array.isArray(media.videos) ? media.videos : [];
   const photos = Array.isArray(media.photos) ? media.photos : [];
-
-  const firstVideo = videos.find(video => video.url);
-  const firstPhoto = photos.find(photo => photo.url);
+  const videos = Array.isArray(media.videos) ? media.videos : [];
+  const all = Array.isArray(media.all) ? media.all : [];
 
   return {
-    imageUrl: firstVideo?.thumbnail_url || firstPhoto?.url || null,
-    videoUrl: firstVideo?.url || null,
+    tweet,
+    media: {
+      ...media,
+      photos,
+      videos,
+      all,
+      imageUrl: photos[0]?.url || photos[0]?.image_url || media.imageUrl || media.image_url || null,
+      videoUrl: videos[0]?.url || videos[0]?.video_url || media.videoUrl || media.video_url || null,
+    },
   };
 }
 
-function extractTweetMedia(tweetData) {
-  const mediaItems = [
-    ...(Array.isArray(tweetData.mediaDetails) ? tweetData.mediaDetails : []),
-    ...(Array.isArray(tweetData.photos) ? tweetData.photos : []),
-    ...(Array.isArray(tweetData.videos) ? tweetData.videos : []),
-    ...(Array.isArray(tweetData.extended_entities?.media) ? tweetData.extended_entities.media : []),
-    ...(Array.isArray(tweetData.entities?.media) ? tweetData.entities.media : []),
-  ];
-
-  const result = {
-    imageUrl: null,
-    videoUrl: null,
-  };
-
-  for (const item of mediaItems) {
-    const imageUrl = item.media_url_https || item.media_url || item.url || item.image_url || item.thumbnail_url;
-
-    if (!result.imageUrl && imageUrl) {
-      result.imageUrl = imageUrl;
-    }
-
-    const variants = [
-      ...(Array.isArray(item.video_info?.variants) ? item.video_info.variants : []),
-      ...(Array.isArray(item.video_variants) ? item.video_variants : []),
-      ...(Array.isArray(item.variants) ? item.variants : []),
-    ];
-
-    const mp4Variants = variants
-      .filter(variant => variant.url && (!variant.content_type || variant.content_type === 'video/mp4' || variant.url.includes('.mp4')))
-      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-
-    if (!result.videoUrl && mp4Variants[0]?.url) {
-      result.videoUrl = mp4Variants[0].url;
-    }
-  }
-
-  return result;
+if (!config.DISCORD_TOKEN) {
+  logger.error('Missing DISCORD_TOKEN.');
+  process.exit(1);
 }
 
-async function sendSayMessage(message) {
-  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
-    await message.reply('You do not have permission to use this command.');
-    return;
-  }
-
-  const content = message.content.slice(`${PREFIX}say`.length).trim();
-
-  if (!content) {
-    await message.reply(`Use: \`${PREFIX}say #channel message\``);
-    return;
-  }
-
-  const mentionedChannel = message.mentions.channels.first();
-  let targetChannel = mentionedChannel || message.channel;
-  let text = content;
-
-  if (mentionedChannel) {
-    text = content.replace(`<#${mentionedChannel.id}>`, '').trim();
-  }
-
-  if (!text) {
-    await message.reply(`Use: \`${PREFIX}say #channel message\``);
-    return;
-  }
-
-  await targetChannel.send(text);
-
-  if (targetChannel.id !== message.channel.id) {
-    await message.reply(`Message sent to ${targetChannel}.`);
-  }
-}
-
-async function sendCustomEmbed(message) {
-  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
-    await message.reply('You do not have permission to use this command.');
-    return;
-  }
-
-  const content = message.content.slice(`${PREFIX}embed`.length).trim();
-
-  if (!content) {
-    await message.reply(`Use: \`${PREFIX}embed #channel Title | Description\``);
-    return;
-  }
-
-  const mentionedChannel = message.mentions.channels.first();
-  let targetChannel = mentionedChannel || message.channel;
-  let embedText = content;
-
-  if (mentionedChannel) {
-    embedText = content.replace(`<#${mentionedChannel.id}>`, '').trim();
-  }
-
-  const parts = embedText.split('|').map(part => part.trim());
-  const title = parts[0];
-  const description = parts.slice(1).join('|').trim();
-
-  if (!title || !description) {
-    await message.reply(`Use: \`${PREFIX}embed #channel Title | Description\``);
-    return;
-  }
-
-  const embed = new EmbedBuilder()
-    .setTitle(title)
-    .setDescription(description)
-    .setColor(0xff7aa8)
-    .setTimestamp();
-
-  await targetChannel.send({ embeds: [embed] });
-
-  if (targetChannel.id !== message.channel.id) {
-    await message.reply(`Embed sent to ${targetChannel}.`);
-  }
-}
-
-async function sendCustomAnnouncement(message) {
-  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
-    await message.reply('You do not have permission to use this command.');
-    return;
-  }
-
-  const content = message.content.slice(`${PREFIX}announce`.length).trim();
-
-  if (!content) {
-    await message.reply(`Use: \`${PREFIX}announce #channel content | embed description | image/gif url | button label | button url\``);
-    return;
-  }
-
-  const mentionedChannel = message.mentions.channels.first();
-  let targetChannel = mentionedChannel || message.channel;
-  let announcementText = content;
-
-  if (mentionedChannel) {
-    announcementText = content.replace(`<#${mentionedChannel.id}>`, '').trim();
-  }
-
-  const parts = announcementText.split('|').map(part => part.trim());
-  const topContent = parts[0];
-  const description = parts[1];
-  const imageUrl = parts[2];
-  const buttonLabel = parts[3];
-  const buttonUrl = parts[4];
-
-  if (!topContent || !description) {
-    await message.reply(`Use: \`${PREFIX}announce #channel content | embed description | image/gif url | button label | button url\``);
-    return;
-  }
-
-  const embed = new EmbedBuilder()
-    .setDescription(description)
-    .setColor(16572415)
-    .setTimestamp();
-
-  if (imageUrl && imageUrl.startsWith('http')) {
-    embed.setImage(imageUrl);
-  }
-
-  const payload = {
-    content: topContent,
-    embeds: [embed],
-  };
-
-  if (buttonLabel && buttonUrl) {
-    const row = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setLabel(buttonLabel)
-        .setStyle(ButtonStyle.Link)
-        .setURL(buttonUrl)
-    );
-
-    payload.components = [row];
-  }
-
-  await targetChannel.send(payload);
-
-  if (targetChannel.id !== message.channel.id) {
-    await message.reply(`Announcement sent to ${targetChannel}.`);
-  }
-}
-
-async function handleModApplicationAnswer(message) {
-  const application = modApplications.get(message.author.id);
-
-  if (!application) return;
-
-  const answer = message.content.trim();
-
-  if (!answer) {
-    await message.reply('♡ please type an answer for this question.');
-    return;
-  }
-
-  application.answers.push(answer);
-  application.step += 1;
-
-  if (application.step < MOD_APPLICATION_QUESTIONS.length) {
-    modApplications.set(message.author.id, application);
-    await message.reply(`♡ saved!\n\n**Question ${application.step + 1}/${MOD_APPLICATION_QUESTIONS.length}:** ${MOD_APPLICATION_QUESTIONS[application.step]}`);
-    return;
-  }
-
-  modApplications.delete(message.author.id);
-
-  try {
-    const guild = await client.guilds.fetch(GUILD_ID);
-    const member = await guild.members.fetch(message.author.id).catch(() => null);
-
-    if (!member) {
-      await message.reply('You are not a member of the server.');
-      return;
-    }
-
-    if (modApplicationChannels.has(message.author.id)) {
-      await message.reply('♡ you already have an open mod application. staff will review it soon.');
-      return;
-    }
-
-    const channelName = `mod-app-${message.author.username}`
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, '')
-      .slice(0, 90);
-
-    const channel = await guild.channels.create({
-      name: channelName,
-      type: ChannelType.GuildText,
-      parent: MOD_APP_CATEGORY_ID,
-      topic: message.author.id,
-      permissionOverwrites: [
-        {
-          id: guild.roles.everyone.id,
-          deny: [PermissionsBitField.Flags.ViewChannel],
-        },
-        {
-          id: STAFF_ROLE_ID,
-          allow: [
-            PermissionsBitField.Flags.ViewChannel,
-            PermissionsBitField.Flags.SendMessages,
-            PermissionsBitField.Flags.ReadMessageHistory,
-          ],
-        },
-        {
-          id: client.user.id,
-          allow: [
-            PermissionsBitField.Flags.ViewChannel,
-            PermissionsBitField.Flags.SendMessages,
-            PermissionsBitField.Flags.ReadMessageHistory,
-            PermissionsBitField.Flags.ManageChannels,
-          ],
-        },
-      ],
-    });
-
-    modApplicationChannels.set(message.author.id, channel.id);
-
-    const formattedAnswers = MOD_APPLICATION_QUESTIONS.map((question, index) => {
-      return `**${index + 1}. ${question}**\n${application.answers[index] || 'No answer'}`;
-    }).join('\n\n');
-
-    const embed = new EmbedBuilder()
-      .setTitle('New Mod Application')
-      .setDescription(`Applicant: <@${message.author.id}> (\`${message.author.id}\`)\n\n${formattedAnswers}\n\nUse \`${PREFIX}acceptmod\` or \`${PREFIX}denymod\`.`)
-      .setColor(0xff7aa8)
-      .setThumbnail(message.author.displayAvatarURL({ dynamic: true }))
-      .setTimestamp();
-
-    await channel.send({
-      content: `<@&${STAFF_ROLE_ID}> New mod application!`,
-      embeds: [embed],
-    });
-
-    if (MOD_APP_LOG_CHANNEL_ID) {
-      const logChannel = await guild.channels.fetch(MOD_APP_LOG_CHANNEL_ID).catch(() => null);
-
-      if (logChannel && logChannel.id !== channel.id) {
-        await logChannel.send(`♡ new mod application from <@${message.author.id}>: ${channel}`);
-      }
-    }
-
-    await message.reply('♡ your mod application has been submitted. staff will review it soon!');
-  } catch (err) {
-    logger.error('Failed to submit mod application:', err);
-    await message.reply('Something went wrong while submitting your mod application. Please contact staff.');
-  }
-}
-
-// boost data load/save moved to storage.js
-
-async function handleBoostSystemMessage(message) {
-  if (!message.guild) return;
-
-  const systemTypes = [8, 9, 10, 11];
-
-  if (!systemTypes.includes(message.type)) return;
-  if (!message.author) return;
-
-  const userId = message.author.id;
-  const currentBoosts = boostData[userId]?.boosts || 0;
-  const newBoosts = currentBoosts + 1;
-
-  boostData[userId] = {
-    boosts: newBoosts,
-    username: message.author.tag,
-    lastBoostedAt: new Date().toISOString(),
-  };
-
-  storage.saveBoostData(BOOST_DATA_FILE, boostData);
-
-  await sendBoostLog(message, newBoosts);
-
-  if (newBoosts >= 2) {
-    await remindUserToVerify(message.author, newBoosts);
-  }
-}
-
-async function sendBoostLog(message, boostCount) {
-  try {
-    const channel = await message.guild.channels.fetch(BOOST_LOG_CHANNEL_ID).catch(() => null);
-
-    if (!channel) return;
-
-    const embed = new EmbedBuilder()
-      .setTitle('Boost Logged')
-      .setDescription(`${message.author} boosted the server.`)
-      .addFields(
-        { name: 'User', value: `${message.author.tag}`, inline: true },
-        { name: 'Tracked Boosts', value: `${boostCount}`, inline: true }
-      )
-      .setColor(0xff7aa8)
-      .setTimestamp();
-
-    await channel.send({ embeds: [embed] });
-  } catch (err) {
-    logger.error('Failed to send boost log:', err);
-  }
-}
-
-async function remindUserToVerify(user, boostCount) {
-  try {
-    await user.send(`Thank you for boosting FVGNATION ${boostCount} times. You may qualify for 2x booster perks. Send \`${PREFIX}verifyboost\` here to start verification.`);
-  } catch (err) {
-    logger.error(`Could not DM ${user.tag} about boost verification.`);
-  }
-}
-
-async function addTwitterFeed(message, args) {
-  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
-    await message.reply('You do not have permission to use this command.');
-    return;
-  }
-
-  const username = args[1]?.replace('@', '').toLowerCase();
-  const channel = message.mentions.channels.first();
-  const feedUrl = args.find(arg => arg.startsWith('http'));
-
-  if (!username || !channel || !feedUrl) {
-    await message.reply(`Use: \`${PREFIX}twitteradd username #channel rssFeedUrl\``);
-    return;
-  }
-
-  if (!feedUrl.startsWith('http://') && !feedUrl.startsWith('https://')) {
-    await message.reply('Please provide a valid RSS feed URL.');
-    return;
-  }
-
-  const existing = twitterFeeds.find(feed => feed.username === username);
-
-  if (existing) {
-    existing.channelId = channel.id;
-    existing.feedUrl = feedUrl;
-    existing.updatedAt = new Date().toISOString();
-  } else {
-    twitterFeeds.push({
-      username,
-      channelId: channel.id,
-      feedUrl,
-      lastPostLink: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  saveTwitterFeeds();
-
-  await message.reply(`✅ Watching **@${username}** and posting new posts in ${channel}.`);
-}
-
-async function listTwitterFeeds(message) {
-  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
-    await message.reply('You do not have permission to use this command.');
-    return;
-  }
-
-  if (twitterFeeds.length === 0) {
-    await message.reply('No X/Twitter feeds are being watched yet.');
-    return;
-  }
-
-  const lines = twitterFeeds.map((feed, index) => `**${index + 1}.** @${feed.username} → <#${feed.channelId}>`);
-
-  const embed = new EmbedBuilder()
-    .setTitle('Watched X/Twitter Feeds')
-    .setDescription(lines.join('\n'))
-    .setColor(0xff7aa8)
-    .setTimestamp();
-
-  await message.channel.send({ embeds: [embed] });
-}
-
-async function removeTwitterFeed(message, args) {
-  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
-    await message.reply('You do not have permission to use this command.');
-    return;
-  }
-
-  const username = args[1]?.replace('@', '').toLowerCase();
-
-  if (!username) {
-    await message.reply(`Use: \`${PREFIX}twitterremove username\``);
-    return;
-  }
-
-  const index = twitterFeeds.findIndex(feed => feed.username === username);
-
-  if (index === -1) {
-    await message.reply(`@${username} is not being watched.`);
-    return;
-  }
-
-  twitterFeeds.splice(index, 1);
-  saveTwitterFeeds();
-
-  await message.reply(`✅ Removed **@${username}** from watched X/Twitter feeds.`);
-}
-
-function startTwitterFeedWatcher() {
-  checkTwitterFeeds().catch(err => logger.error('Twitter feed check failed', err));
-
-  setInterval(() => {
-    checkTwitterFeeds().catch(err => logger.error('Twitter feed check failed', err));
-  }, 60 * 1000);
-}
-
-async function runTwitterFeedCheck(message) {
-  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
-    await message.reply('You do not have permission to use this command.');
-    return;
-  }
-
-  await message.reply('🔎 Checking watched X/Twitter feeds now...');
-  await checkTwitterFeeds({ forcePostNewest: false });
-  await message.channel.send('✅ Feed check finished.');
-}
-
-async function checkTwitterFeeds(options = {}) {
-  const { forcePostNewest = false } = options;
-
-  if (!twitterFeeds.length) return;
-
-  for (const feed of twitterFeeds) {
-    try {
-      const posts = await fetchRssPosts(feed.feedUrl);
-      const newestPost = posts[0];
-
-      if (!newestPost || !newestPost.link) continue;
-
-      if (!feed.lastPostLink && !forcePostNewest) {
-        feed.lastPostLink = newestPost.link;
-        feed.updatedAt = new Date().toISOString();
-        saveTwitterFeeds();
-        continue;
-      }
-
-      if (newestPost.link === feed.lastPostLink && !forcePostNewest) continue;
-
-      const channel = await client.channels.fetch(feed.channelId).catch(() => null);
-
-      if (!channel || !channel.isTextBased()) continue;
-
-      const normalizedLink = normalizeTweetUrl(newestPost.link);
-      const tweetInfo = parseTweetUrl(normalizedLink);
-      const tweetDetails = tweetInfo.statusId ? await fetchTweetDetails(tweetInfo.statusId).catch(err => {
-        logger.warn(`Failed to fetch tweet details for RSS feed @${feed.username}`, err);
-        return null;
-      }) : null;
-
-      const media = tweetDetails?.media || {
-        imageUrl: newestPost.imageUrl,
-        videoUrl: null,
-      };
-
-      const fileUrl = media.videoUrl || media.imageUrl;
-
-      if (!fileUrl) {
-        logger.warn(`No media file found for RSS feed @${feed.username}: ${newestPost.link}`);
-        feed.lastPostLink = newestPost.link;
-        feed.lastSeenTitle = newestPost.title || null;
-        feed.lastCheckedAt = new Date().toISOString();
-        feed.updatedAt = new Date().toISOString();
-        saveTwitterFeeds();
-        continue;
-      }
-
-      const fileName = media.videoUrl ? 'tweet-video.mp4' : 'tweet-image.jpg';
-
-      await channel.send({
-        files: [
-          {
-            attachment: fileUrl,
-            name: fileName,
-          },
-        ],
-      });
-
-      feed.lastPostLink = newestPost.link;
-      feed.lastSeenTitle = newestPost.title || null;
-      feed.lastCheckedAt = new Date().toISOString();
-      feed.updatedAt = new Date().toISOString();
-      saveTwitterFeeds();
-    } catch (err) {
-      logger.error(`Failed to check Twitter feed for @${feed.username}`, err);
-    }
-  }
-}
-
-async function fetchRssPosts(feedUrl) {
-  const response = await fetch(feedUrl);
-
-  if (!response.ok) {
-    throw new Error(`RSS request failed with status ${response.status}`);
-  }
-
-  const xml = await response.text();
-  const itemMatches = [...xml.matchAll(/<item>[\s\S]*?<\/item>/g)];
-
-  return itemMatches.map(match => {
-    const item = match[0];
-    const title = decodeXml(stripHtml(getXmlValue(item, 'title')));
-    const descriptionRaw = decodeXml(getXmlValue(item, 'description'));
-    const description = stripHtml(descriptionRaw);
-    const link = decodeXml(getXmlValue(item, 'link'));
-    const pubDate = decodeXml(getXmlValue(item, 'pubDate'));
-    const imageUrl = extractRssImage(item, descriptionRaw);
-
-    return {
-      title,
-      description,
-      link,
-      pubDate,
-      imageUrl,
-    };
-  }).filter(post => post.link);
-}
-
-function getXmlValue(xml, tagName) {
-  const match = xml.match(new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'i'));
-  return match ? match[1].replace('<![CDATA[', '').replace(']]>', '').trim() : '';
-}
-
-function decodeXml(value) {
-  return value
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-}
-
-function extractRssImage(itemXml, descriptionHtml) {
-  const mediaContent = itemXml.match(/<media:content[^>]+url=["']([^"']+)["'][^>]*>/i);
-  if (mediaContent?.[1]) return decodeXml(mediaContent[1]);
-
-  const mediaThumbnail = itemXml.match(/<media:thumbnail[^>]+url=["']([^"']+)["'][^>]*>/i);
-  if (mediaThumbnail?.[1]) return decodeXml(mediaThumbnail[1]);
-
-  const enclosure = itemXml.match(/<enclosure[^>]+url=["']([^"']+)["'][^>]*type=["']image\//i);
-  if (enclosure?.[1]) return decodeXml(enclosure[1]);
-
-  const imgTag = descriptionHtml.match(/<img[^>]+src=["']([^"']+)["'][^>]*>/i);
-  if (imgTag?.[1]) return decodeXml(imgTag[1]);
-
-  return null;
-}
-
-function stripHtml(value) {
-  return value
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]*>/g, '')
-    .replace(/\s+\n/g, '\n')
-    .replace(/\n\s+/g, '\n')
-    .trim();
-}
-
-function cleanTweetText(value) {
-  const cleaned = value
-    .replace(/https?:\/\/\S+/g, '')
-    .replace(/pic\.twitter\.com\/\S+/g, '')
-    .replace(/x\.com\/\S+/g, '')
-    .replace(/twitter\.com\/\S+/g, '')
-    .trim();
-
-  if (!cleaned) return 'New post';
-  return cleaned.length > 4000 ? `${cleaned.slice(0, 3997)}...` : cleaned;
-}
-
-async function sendBoostCount(message) {
-  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
-    await message.reply('You do not have permission to use this command.');
-    return;
-  }
-
-  const target = message.mentions.users.first();
-
-  if (!target) {
-    await message.reply(`Use: \`${PREFIX}boostcount @user\``);
-    return;
-  }
-
-  const data = boostData[target.id];
-  const count = data?.boosts || 0;
-
-  const embed = new EmbedBuilder()
-    .setTitle('Tracked Boost Count')
-    .setDescription(`${target} has **${count}** tracked boost message(s).`)
-    .setColor(0xff7aa8)
-    .setTimestamp();
-
-  await message.channel.send({ embeds: [embed] });
-}
-
-async function sendBoosterList(message) {
-  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
-    await message.reply('You do not have permission to use this command.');
-    return;
-  }
-
-  const boosters = Object.entries(boostData)
-    .filter(([, data]) => data?.verifiedBoosts > 0)
-    .sort((a, b) => (b[1].verifiedBoosts || 0) - (a[1].verifiedBoosts || 0));
-
-  if (boosters.length === 0) {
-    await message.reply('♡ no verified boosters found.');
-    return;
-  }
-
-  let supabaseStatus = 'Supabase is not configured.';
-  if (supabase.isSupabaseConfigured()) {
-    try {
-      const result = await supabase.saveBoosterList(boostData);
-      supabaseStatus = `Saved ${result.count} booster record(s) to Supabase.`;
-    } catch (err) {
-      supabaseStatus = 'Failed to save booster list to Supabase.';
-      logger.error('Failed to save booster list to Supabase', err);
-    }
-  }
-
-  const lines = boosters.slice(0, 25).map(([userId, data], index) => {
-    const verifiedAt = data.verifiedAt
-      ? ` — verified <t:${Math.floor(new Date(data.verifiedAt).getTime() / 1000)}:R>`
-      : '';
-
-    return `**${index + 1}.** <@${userId}> — **${data.verifiedBoosts}** boost(s)${verifiedAt}`;
-  });
-
-  const embed = new EmbedBuilder()
-    .setTitle('💎 Verified Booster List')
-    .setDescription(lines.join('\n'))
-    .addFields({ name: 'Supabase', value: supabaseStatus, inline: false })
-    .setFooter({ text: boosters.length > 25 ? `Showing 25 of ${boosters.length}` : `${boosters.length} verified booster(s)` })
-    .setColor(0xff7aa8)
-    .setTimestamp();
-
-  await message.channel.send({ embeds: [embed] });
-}
-
-
-async function sendLostBoosters(message) {
-  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
-    await message.reply('You do not have permission to use this command.');
-    return;
-  }
-
-  const lostBoosters = Object.entries(boostData)
-    .filter(([, data]) => data && (data.lostBoostAt || data.removedAt || data.lostBoostAlerted) && !data.verified)
-    .sort((a, b) => {
-      const aDate = new Date(a[1].lostBoostAt || a[1].removedAt || 0).getTime();
-      const bDate = new Date(b[1].lostBoostAt || b[1].removedAt || 0).getTime();
-      return bDate - aDate;
-    });
-
-  if (lostBoosters.length === 0) {
-    await message.reply('♡ no lost boosters found.');
-    return;
-  }
-
-  const lines = lostBoosters.slice(0, 25).map(([userId, data], index) => {
-    const lostAt = data.lostBoostAt || data.removedAt;
-    const lostText = lostAt
-      ? `<t:${Math.floor(new Date(lostAt).getTime() / 1000)}:R>`
-      : 'unknown time';
-    const oldBoosts = data.oldVerifiedBoosts || data.previousVerifiedBoosts || data.verifiedBoosts || data.boosts || 0;
-
-    return `**${index + 1}.** <@${userId}> — lost ${lostText} • old boosts: **${oldBoosts}**`;
-  });
-
-  const embed = new EmbedBuilder()
-    .setTitle('💔 Lost Boosters')
-    .setDescription(lines.join('\n'))
-    .setFooter({ text: lostBoosters.length > 25 ? `Showing 25 of ${lostBoosters.length}` : `${lostBoosters.length} lost booster(s)` })
-    .setColor(0xff5555)
-    .setTimestamp();
-
-  await message.channel.send({ embeds: [embed] });
-}
-
-async function syncBoosters(message) {
-  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
-    await message.reply('You do not have permission to use this command.');
-    return;
-  }
-
-  await message.reply('🔄 Syncing verified boosters...');
-
-  await message.guild.members.fetch().catch(() => null);
-
-  let removed = 0;
-  let active = 0;
-
-  for (const [userId, data] of Object.entries(boostData)) {
-    if (!data?.verified) continue;
-
-    const member = message.guild.members.cache.get(userId);
-
-    if (member?.premiumSince) {
-      active++;
-      continue;
-    }
-
-    const oldBoostCount = data.verifiedBoosts || data.boosts || 0;
-
-    boostData[userId] = {
-      ...data,
-      boosts: 0,
-      verifiedBoosts: 0,
-      verified: false,
-      lostBoostAt: new Date().toISOString(),
-      oldVerifiedBoosts: oldBoostCount,
-      lostBoostAlerted: true,
-      syncedRemoved: true,
-    };
-
-    removed++;
-  }
-
-  storage.saveBoostData(BOOST_DATA_FILE, boostData);
-
-  if (supabase.isSupabaseConfigured()) {
-    try {
-      await supabase.saveBoosterList(boostData);
-    } catch (err) {
-      logger.error('Failed to save sync to Supabase', err);
-    }
-  }
-
-  const embed = new EmbedBuilder()
-    .setTitle('🔄 Booster Sync Complete')
-    .addFields(
-      { name: 'Still Boosting', value: `${active}`, inline: true },
-      { name: 'Removed', value: `${removed}`, inline: true }
-    )
-    .setColor(0xff7aa8)
-    .setTimestamp();
-
-  await message.channel.send({ embeds: [embed] });
-}
-
-async function sendTestBoostDM(message) {
-  if (!message.member.roles.cache.has(STAFF_ROLE_ID)) {
-    await message.reply('You do not have permission to use this command.');
-    return;
-  }
-
-  const target = message.mentions.users.first();
-
-  if (!target) {
-    await message.reply(`Use: \`${PREFIX}testboostdm @user\``);
-    return;
-  }
-
-  try {
-    await target.send(
-      `♡ thank you for boosting FVGNATION 2 times. You may qualify for 2x booster perks. Send \`${PREFIX}verifyboost\` here to start verification.`
-    );
-
-    await message.reply(`✅ Test boost DM sent to ${target.tag}.`);
-  } catch (err) {
-    await message.reply('❌ Failed to send DM. They probably have DMs disabled.');
-  }
-}
-
-client.login(process.env.TOKEN);
+client.login(config.DISCORD_TOKEN).catch((err) => {
+  logger.error('Failed to login to Discord', err);
+  process.exit(1);
+});

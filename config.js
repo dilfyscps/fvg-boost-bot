@@ -17,4 +17,5 @@ module.exports = {
   SUPABASE_KEY: getEnv('SUPABASE_KEY', null),
   SUPABASE_BOOSTER_TABLE: getEnv('SUPABASE_BOOSTER_TABLE', 'booster_list'),
   SUPABASE_AUTO_SYNC: getEnv('SUPABASE_AUTO_SYNC', 'false'),
+  DISCORD_TOKEN: getEnv('DISCORD_TOKEN', getEnv('BOT_TOKEN', getEnv('TOKEN', null))),
 };
