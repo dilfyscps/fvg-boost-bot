@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 const config = require('./config');
 const storage = require('./storage');
 const logger = require('./logger');
@@ -77,6 +78,8 @@ const WARNINGS_FILE = path.join(__dirname, 'warnings.json');
 const TWITTER_FEEDS_FILE = path.join(__dirname, 'twitter-feeds.json');
 const STICKY_MESSAGES_FILE = path.join(__dirname, 'sticky-messages.json');
 const AUTORESPONDERS_FILE = path.join(__dirname, 'autoresponders.json');
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const LASTFM_USERS_FILE = path.join(DATA_DIR, 'lastfm-users.json');
 
 let warnings = {};
 
@@ -94,6 +97,7 @@ let boostData = storage.loadBoostData(BOOST_DATA_FILE);
 let twitterFeeds = loadTwitterFeeds();
 let stickyMessages = loadStickyMessages();
 let autoresponders = loadAutoresponders();
+let lastfmUsers = loadLastfmUsers();
 
 if (supabase.loadStickyMessages) {
   supabase.loadStickyMessages()
@@ -318,6 +322,126 @@ client.on('messageCreate', async (message) => {
 
   if (command === `${PREFIX}ping`) {
     await message.reply('pong');
+    return;
+  }
+
+  if (command === `${PREFIX}fm` || command === `${PREFIX}np`) {
+    await sendLastfmNowPlaying(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}f`) {
+    await sendLastfmNowPlaying(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}r`) {
+    await sendLastfmRecent(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}p`) {
+    await sendLastfmProfile(message);
+    return;
+  }
+
+  if (command === `${PREFIX}ta`) {
+    await sendLastfmTopArtists(message, [command, 'overall']);
+    return;
+  }
+
+  if (command === `${PREFIX}tt`) {
+    await sendLastfmTopTracks(message, [command, 'overall']);
+    return;
+  }
+
+  if (command === `${PREFIX}tal`) {
+    await sendLastfmTopAlbums(message, [command, 'overall']);
+    return;
+  }
+
+  if (command === `${PREFIX}wk`) {
+    await sendLastfmTopArtists(message, [command, 'week']);
+    return;
+  }
+
+  if (command === `${PREFIX}mo`) {
+    await sendLastfmTopArtists(message, [command, 'month']);
+    return;
+  }
+
+  if (command === `${PREFIX}all`) {
+    await sendLastfmTopArtists(message, [command, 'overall']);
+    return;
+  }
+
+  if (command === `${PREFIX}twk`) {
+    await sendLastfmTopTracks(message, [command, 'week']);
+    return;
+  }
+
+  if (command === `${PREFIX}tmo`) {
+    await sendLastfmTopTracks(message, [command, 'month']);
+    return;
+  }
+
+  if (command === `${PREFIX}tall`) {
+    await sendLastfmTopTracks(message, [command, 'overall']);
+    return;
+  }
+
+  if (command === `${PREFIX}awk`) {
+    await sendLastfmTopAlbums(message, [command, 'week']);
+    return;
+  }
+
+  if (command === `${PREFIX}amo`) {
+    await sendLastfmTopAlbums(message, [command, 'month']);
+    return;
+  }
+
+  if (command === `${PREFIX}aall`) {
+    await sendLastfmTopAlbums(message, [command, 'overall']);
+    return;
+  }
+
+  if (command === `${PREFIX}setfm`) {
+    await setLastfmUser(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}recent`) {
+    await sendLastfmRecent(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}fmprofile`) {
+    await sendLastfmProfile(message);
+    return;
+  }
+
+  if (command === `${PREFIX}topartists`) {
+    await sendLastfmTopArtists(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}toptracks`) {
+    await sendLastfmTopTracks(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}topalbums`) {
+    await sendLastfmTopAlbums(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}taste`) {
+    await sendLastfmTaste(message);
+    return;
+  }
+
+  if (command === `${PREFIX}whoknows`) {
+    await sendLastfmWhoKnows(message, args);
     return;
   }
 
@@ -855,7 +979,20 @@ async function sendHelpEmbed(message) {
     {
       id: 'general',
       title: 'General',
-      body: `\`${PREFIX}help\` — Show this help message\n\`${PREFIX}ping\` — Check if the bot is online\n\`${PREFIX}userinfo @user\` — Show basic user info`,
+      body: `\`${PREFIX}help\` — Show this help message
+\`${PREFIX}ping\` — Check if the bot is online
+\`${PREFIX}setfm username\` — Save your Last.fm username
+\`${PREFIX}fm\` — Show your current Last.fm track
+\`${PREFIX}np\` — Same as fm
+\`${PREFIX}recent [amount]\` — Show recent scrobbles
+\`${PREFIX}fmprofile\` — Show your Last.fm profile
+\`${PREFIX}topartists [week|month|overall]\` — Show top artists
+\`${PREFIX}toptracks [week|month|overall]\` — Show top tracks
+\`${PREFIX}topalbums [week|month|overall]\` — Show top albums
+\`${PREFIX}taste @user\` — Compare music taste with another saved user
+\`${PREFIX}whoknows artist\` — Server leaderboard for an artist
+Aliases: \`${PREFIX}f\`, \`${PREFIX}r\`, \`${PREFIX}p\`, \`${PREFIX}ta\`, \`${PREFIX}tt\`, \`${PREFIX}tal\`, \`${PREFIX}wk\`, \`${PREFIX}mo\`, \`${PREFIX}all\`, \`${PREFIX}twk\`, \`${PREFIX}tmo\`, \`${PREFIX}tall\`, \`${PREFIX}awk\`, \`${PREFIX}amo\`, \`${PREFIX}aall\`
+\`${PREFIX}userinfo @user\` — Show basic user info`,
     },
     {
       id: 'boosting',
@@ -1047,6 +1184,45 @@ function saveAutoresponders() {
   }
 }
 
+function loadLastfmUsers() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+
+    if (fs.existsSync(LASTFM_USERS_FILE)) {
+      return JSON.parse(fs.readFileSync(LASTFM_USERS_FILE, 'utf8'));
+    }
+
+    fs.writeFileSync(LASTFM_USERS_FILE, JSON.stringify({}, null, 2));
+    return {};
+  } catch (err) {
+    logger.error('Failed to load Last.fm users', err);
+    return {};
+  }
+}
+
+function saveLastfmUsers() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(LASTFM_USERS_FILE, JSON.stringify(lastfmUsers, null, 2));
+  } catch (err) {
+    logger.error('Failed to save Last.fm users', err);
+  }
+}
+
+async function setLastfmUser(message, args) {
+  const username = args[1];
+
+  if (!username) {
+    await message.reply(`Use: \`${PREFIX}setfm your_lastfm_username\``);
+    return;
+  }
+
+  lastfmUsers[message.author.id] = username;
+  saveLastfmUsers();
+
+  await message.reply(`Saved your Last.fm as **${username}** ♫`);
+}
+
 async function purgeMessages(message, args) {
   const hasStaffRole = message.member.roles.cache.has(STAFF_ROLE_ID);
   const hasManageMessages = message.member.permissions?.has(PermissionsBitField.Flags.ManageMessages) || message.member.permissions?.has(PermissionsBitField.Flags.Administrator);
@@ -1231,6 +1407,428 @@ async function sendAvatar(message) {
     .setColor(0xff7aa8);
 
   await message.channel.send({ embeds: [embed] });
+}
+
+async function sendLastfmNowPlaying(message, args) {
+  const username = args[1] || lastfmUsers?.[message.author.id];
+
+  if (!process.env.LASTFM_API_KEY) {
+    await message.reply('Last.fm is not set up yet. Add `LASTFM_API_KEY` to your environment variables.');
+    return;
+  }
+
+  if (!username) {
+    await message.reply(`Use: \`${PREFIX}setfm your_lastfm_username\` first.`);
+    return;
+  }
+
+  try {
+    const { data } = await axios.get('https://ws.audioscrobbler.com/2.0/', {
+      params: {
+        method: 'user.getrecenttracks',
+        user: username,
+        api_key: process.env.LASTFM_API_KEY,
+        format: 'json',
+        limit: 1,
+      },
+    });
+
+    const track = data.recenttracks?.track?.[0];
+
+    if (!track) {
+      await message.reply(`No recent Last.fm tracks found for **${username}**.`);
+      return;
+    }
+
+    const artist = track.artist?.['#text'] || 'Unknown artist';
+    const song = track.name || 'Unknown song';
+    const album = track.album?.['#text'] || 'Unknown album';
+    const trackUrl = track.url || `https://www.last.fm/user/${encodeURIComponent(username)}`;
+    const images = Array.isArray(track.image) ? track.image : [];
+    const image = [...images].reverse().find(item => item['#text'])?.['#text'];
+    const isNowPlaying = track['@attr']?.nowplaying === 'true';
+
+    const embed = new EmbedBuilder()
+      .setTitle(isNowPlaying ? 'Now Playing ♫' : 'Last Played ♫')
+      .setURL(trackUrl)
+      .setDescription(`**${song}**\nby **${artist}**\n${album}`)
+      .setColor(0xff7aa8)
+      .setFooter({ text: `Last.fm • ${username}` })
+      .setTimestamp();
+
+    if (image) {
+      embed.setThumbnail(image);
+    }
+
+    await message.channel.send({ embeds: [embed] });
+  } catch (err) {
+    logger.error('Failed to fetch Last.fm data', err);
+    await message.reply('Could not fetch Last.fm data. Make sure the username is correct.');
+  }
+}
+
+async function sendLastfmRecent(message, args) {
+  const username = lastfmUsers?.[message.author.id];
+
+  if (!username) {
+    await message.reply(`Use: \`${PREFIX}setfm your_lastfm_username\` first.`);
+    return;
+  }
+
+  const limit = Math.min(parseInt(args[1], 10) || 5, 10);
+
+  try {
+    const { data } = await axios.get('https://ws.audioscrobbler.com/2.0/', {
+      params: {
+        method: 'user.getrecenttracks',
+        user: username,
+        api_key: process.env.LASTFM_API_KEY,
+        format: 'json',
+        limit,
+      },
+    });
+
+    const tracks = data.recenttracks?.track || [];
+
+    const embed = new EmbedBuilder()
+      .setTitle(`${username}'s Recent Tracks`)
+      .setDescription(
+        tracks.map((t, i) => `${i + 1}. **${t.name}** — ${t.artist?.['#text'] || 'Unknown Artist'}`).join('\n')
+      )
+      .setColor(0xff7aa8);
+
+    await message.channel.send({ embeds: [embed] });
+  } catch (err) {
+    logger.error('Last.fm recent failed', err);
+    await message.reply('Could not fetch recent tracks.');
+  }
+}
+
+async function sendLastfmProfile(message) {
+  const username = lastfmUsers?.[message.author.id];
+
+  if (!username) {
+    await message.reply(`Use: \`${PREFIX}setfm your_lastfm_username\` first.`);
+    return;
+  }
+
+  try {
+    const { data } = await axios.get('https://ws.audioscrobbler.com/2.0/', {
+      params: {
+        method: 'user.getinfo',
+        user: username,
+        api_key: process.env.LASTFM_API_KEY,
+        format: 'json',
+      },
+    });
+
+    const user = data.user;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`${user.name}'s Last.fm Profile`)
+      .setURL(user.url)
+      .addFields(
+        { name: 'Scrobbles', value: `${user.playcount || 0}`, inline: true },
+        { name: 'Country', value: user.country || 'Unknown', inline: true }
+      )
+      .setColor(0xff7aa8);
+
+    await message.channel.send({ embeds: [embed] });
+  } catch (err) {
+    logger.error('Last.fm profile failed', err);
+    await message.reply('Could not fetch Last.fm profile.');
+  }
+}
+
+async function sendLastfmTopArtists(message, args) {
+  const username = lastfmUsers?.[message.author.id];
+
+  if (!username) {
+    await message.reply(`Use: \`${PREFIX}setfm your_lastfm_username\` first.`);
+    return;
+  }
+
+  const periodArg = (args[1] || 'overall').toLowerCase();
+  const periodMap = {
+    week: '7day',
+    month: '1month',
+    overall: 'overall'
+  };
+
+  try {
+    const { data } = await axios.get('https://ws.audioscrobbler.com/2.0/', {
+      params: {
+        method: 'user.gettopartists',
+        user: username,
+        api_key: process.env.LASTFM_API_KEY,
+        format: 'json',
+        period: periodMap[periodArg] || 'overall',
+        limit: 10,
+      },
+    });
+
+    const artists = data.topartists?.artist || [];
+
+    const embed = new EmbedBuilder()
+      .setTitle(`${username}'s Top Artists (${periodArg})`)
+      .setDescription(
+        artists.map((a, i) => `${i + 1}. **${a.name}** — ${a.playcount} plays`).join('\n')
+      )
+      .setColor(0xff7aa8);
+
+    await message.channel.send({ embeds: [embed] });
+  } catch (err) {
+    logger.error('Last.fm top artists failed', err);
+    await message.reply('Could not fetch top artists.');
+  }
+}
+
+function getLastfmPeriod(periodArg) {
+  const periodMap = {
+    week: '7day',
+    month: '1month',
+    overall: 'overall',
+  };
+
+  return periodMap[(periodArg || 'overall').toLowerCase()] || 'overall';
+}
+
+function getLastfmPeriodLabel(periodArg) {
+  const labelMap = {
+    week: 'week',
+    month: 'month',
+    overall: 'overall',
+  };
+
+  return labelMap[(periodArg || 'overall').toLowerCase()] || 'overall';
+}
+
+async function sendLastfmTopTracks(message, args) {
+  const username = lastfmUsers?.[message.author.id];
+
+  if (!username) {
+    await message.reply(`Use: \`${PREFIX}setfm your_lastfm_username\` first.`);
+    return;
+  }
+
+  const period = getLastfmPeriod(args[1]);
+  const periodLabel = getLastfmPeriodLabel(args[1]);
+
+  try {
+    const { data } = await axios.get('https://ws.audioscrobbler.com/2.0/', {
+      params: {
+        method: 'user.gettoptracks',
+        user: username,
+        api_key: process.env.LASTFM_API_KEY,
+        format: 'json',
+        period,
+        limit: 10,
+      },
+    });
+
+    const tracks = data.toptracks?.track || [];
+
+    if (!tracks.length) {
+      await message.reply(`No top tracks found for **${username}**.`);
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle(`${username}'s Top Tracks (${periodLabel})`)
+      .setDescription(
+        tracks.map((t, i) => `${i + 1}. **${t.name}** — ${t.artist?.name || 'Unknown Artist'} • ${t.playcount} plays`).join('\n')
+      )
+      .setColor(0xff7aa8);
+
+    await message.channel.send({ embeds: [embed] });
+  } catch (err) {
+    logger.error('Last.fm top tracks failed', err);
+    await message.reply('Could not fetch top tracks.');
+  }
+}
+
+async function sendLastfmTopAlbums(message, args) {
+  const username = lastfmUsers?.[message.author.id];
+
+  if (!username) {
+    await message.reply(`Use: \`${PREFIX}setfm your_lastfm_username\` first.`);
+    return;
+  }
+
+  const period = getLastfmPeriod(args[1]);
+  const periodLabel = getLastfmPeriodLabel(args[1]);
+
+  try {
+    const { data } = await axios.get('https://ws.audioscrobbler.com/2.0/', {
+      params: {
+        method: 'user.gettopalbums',
+        user: username,
+        api_key: process.env.LASTFM_API_KEY,
+        format: 'json',
+        period,
+        limit: 10,
+      },
+    });
+
+    const albums = data.topalbums?.album || [];
+
+    if (!albums.length) {
+      await message.reply(`No top albums found for **${username}**.`);
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle(`${username}'s Top Albums (${periodLabel})`)
+      .setDescription(
+        albums.map((a, i) => `${i + 1}. **${a.name}** — ${a.artist?.name || 'Unknown Artist'} • ${a.playcount} plays`).join('\n')
+      )
+      .setColor(0xff7aa8);
+
+    const images = Array.isArray(albums[0]?.image) ? albums[0].image : [];
+    const image = [...images].reverse().find(item => item['#text'])?.['#text'];
+
+    if (image) {
+      embed.setThumbnail(image);
+    }
+
+    await message.channel.send({ embeds: [embed] });
+  } catch (err) {
+    logger.error('Last.fm top albums failed', err);
+    await message.reply('Could not fetch top albums.');
+  }
+}
+
+async function fetchLastfmTopArtists(username, limit = 50) {
+  const { data } = await axios.get('https://ws.audioscrobbler.com/2.0/', {
+    params: {
+      method: 'user.gettopartists',
+      user: username,
+      api_key: process.env.LASTFM_API_KEY,
+      format: 'json',
+      period: 'overall',
+      limit,
+    },
+  });
+
+  return data.topartists?.artist || [];
+}
+
+async function sendLastfmTaste(message) {
+  const username = lastfmUsers?.[message.author.id];
+  const target = message.mentions.users.first();
+  const targetUsername = target ? lastfmUsers?.[target.id] : null;
+
+  if (!username) {
+    await message.reply(`Use: \`${PREFIX}setfm your_lastfm_username\` first.`);
+    return;
+  }
+
+  if (!target) {
+    await message.reply(`Use: \`${PREFIX}taste @user\``);
+    return;
+  }
+
+  if (!targetUsername) {
+    await message.reply(`${target} has not saved their Last.fm yet.`);
+    return;
+  }
+
+  try {
+    const [yourArtists, theirArtists] = await Promise.all([
+      fetchLastfmTopArtists(username, 50),
+      fetchLastfmTopArtists(targetUsername, 50),
+    ]);
+
+    const theirArtistNames = new Set(theirArtists.map(artist => artist.name.toLowerCase()));
+    const common = yourArtists.filter(artist => theirArtistNames.has(artist.name.toLowerCase())).slice(0, 10);
+    const score = Math.round((common.length / 50) * 100);
+
+    const compatibility = score >= 50 ? 'Super Compatibility' : score >= 25 ? 'Good Compatibility' : score >= 10 ? 'Low Compatibility' : 'Very Low Compatibility';
+
+    const embed = new EmbedBuilder()
+      .setTitle(`${message.author.username} 🤝 ${target.username}`)
+      .setDescription(
+        `**${compatibility}** — ${score}%\n\n` +
+        (common.length
+          ? `**Common Artists**\n${common.map(artist => `• ${artist.name}`).join('\n')}`
+          : 'No common top artists found.')
+      )
+      .setColor(0xff7aa8)
+      .setFooter({ text: `${username} × ${targetUsername}` });
+
+    await message.channel.send({ embeds: [embed] });
+  } catch (err) {
+    logger.error('Last.fm taste failed', err);
+    await message.reply('Could not compare music taste.');
+  }
+}
+
+async function fetchLastfmArtistPlaycount(username, artistName) {
+  const { data } = await axios.get('https://ws.audioscrobbler.com/2.0/', {
+    params: {
+      method: 'artist.getinfo',
+      artist: artistName,
+      username,
+      api_key: process.env.LASTFM_API_KEY,
+      format: 'json',
+    },
+  });
+
+  return parseInt(data.artist?.stats?.userplaycount || '0', 10) || 0;
+}
+
+async function sendLastfmWhoKnows(message, args) {
+  const artistName = args.slice(1).join(' ').trim();
+
+  if (!artistName) {
+    await message.reply(`Use: \`${PREFIX}whoknows artist name\``);
+    return;
+  }
+
+  const entries = Object.entries(lastfmUsers || {});
+
+  if (!entries.length) {
+    await message.reply('No saved Last.fm users yet.');
+    return;
+  }
+
+  try {
+    const guildMembers = await message.guild.members.fetch().catch(() => null);
+
+    const leaderboard = await Promise.all(entries.map(async ([discordId, username]) => {
+      const playcount = await fetchLastfmArtistPlaycount(username, artistName).catch(() => 0);
+      const member = guildMembers?.get(discordId);
+
+      return {
+        discordId,
+        username,
+        displayName: member?.displayName || username,
+        playcount,
+      };
+    }));
+
+    const sorted = leaderboard
+      .filter(item => item.playcount > 0)
+      .sort((a, b) => b.playcount - a.playcount)
+      .slice(0, 10);
+
+    if (!sorted.length) {
+      await message.reply(`Nobody with a saved Last.fm has scrobbled **${artistName}**.`);
+      return;
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle(`Who Knows ${artistName}?`)
+      .setDescription(
+        sorted.map((item, i) => `${i + 1}. **${item.displayName}** — ${item.playcount} plays`).join('\n')
+      )
+      .setColor(0xff7aa8);
+
+    await message.channel.send({ embeds: [embed] });
+  } catch (err) {
+    logger.error('Last.fm whoknows failed', err);
+    await message.reply('Could not build the Who Knows leaderboard.');
+  }
 }
 
 function isStaffModerator(message, permissionFlag) {

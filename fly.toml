@@ -2,3 +2,7 @@ app = "fvg-boost-bot"
 
 [processes]
 app = "npm start"
+
+[mounts]
+  source = "fvg_data"
+  destination = "/data"
