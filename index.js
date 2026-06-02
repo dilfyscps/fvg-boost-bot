@@ -10,6 +10,8 @@ let supabase = {
   loadStickyMessages: async () => ({}),
   saveStickyMessage: async () => ({ saved: false, reason: 'Supabase module fallback is active. Check supabase.js load error in logs.' }),
   deleteStickyMessage: async () => ({ deleted: false, reason: 'Supabase module fallback is active. Check supabase.js load error in logs.' }),
+  loadAutoresponders: async () => [],
+  saveAutoresponders: async () => ({ saved: false, reason: 'Supabase module fallback is active. Check supabase.js load error in logs.' }),
 };
 
 try {
@@ -74,6 +76,7 @@ const modApplicationChannels = new Map();
 const WARNINGS_FILE = path.join(__dirname, 'warnings.json');
 const TWITTER_FEEDS_FILE = path.join(__dirname, 'twitter-feeds.json');
 const STICKY_MESSAGES_FILE = path.join(__dirname, 'sticky-messages.json');
+const AUTORESPONDERS_FILE = path.join(__dirname, 'autoresponders.json');
 
 let warnings = {};
 
@@ -90,6 +93,7 @@ try {
 let boostData = storage.loadBoostData(BOOST_DATA_FILE);
 let twitterFeeds = loadTwitterFeeds();
 let stickyMessages = loadStickyMessages();
+let autoresponders = loadAutoresponders();
 
 if (supabase.loadStickyMessages) {
   supabase.loadStickyMessages()
@@ -102,6 +106,17 @@ if (supabase.loadStickyMessages) {
     .catch(err => logger.error('Failed to load sticky messages from Supabase', err));
 }
 
+if (supabase.loadAutoresponders) {
+  supabase.loadAutoresponders()
+    .then(data => {
+      if (Array.isArray(data)) {
+        autoresponders = data;
+        logger.info(`Loaded ${data.length} autoresponders from Supabase.`);
+      }
+    })
+    .catch(err => logger.error('Failed to load autoresponders from Supabase', err));
+}
+
 client.once('ready', async () => {
   logger.info(`Logged in as ${client.user.tag}`);
 
@@ -112,15 +127,15 @@ client.once('ready', async () => {
         type: ActivityType.Watching,
       },
       {
-        name: 'with cvms h0le',
+        name: 'playin with cvms h0le',
         type: ActivityType.Playing,
       },
       {
-        name: 'FVGNATION Radio ♡',
+        name: 'JOIN FVGNATION',
         type: ActivityType.Listening,
       },
       {
-        name: 'with bttms h0le',
+        name: 'playin with bttms h0le',
         type: ActivityType.Playing,
       },
     ];
@@ -174,6 +189,7 @@ client.on('messageCreate', async (message) => {
 
   await handleStickyMessageActivity(message);
   await handleBoostSystemMessage(message);
+  await handleAutoresponder(message);
 
   // DM verification + mod application flow
   if (message.channel.type === 1) {
@@ -465,6 +481,11 @@ client.on('messageCreate', async (message) => {
 
   if (command === `${PREFIX}stickymessage` || command === `${PREFIX}sticky` || command === `${PREFIX}sickymessage`) {
     await handleStickyMessageCommand(message, args);
+    return;
+  }
+
+  if (command === `${PREFIX}autoresponder` || command === `${PREFIX}ar`) {
+    await handleAutoresponderCommand(message, args);
     return;
   }
 
@@ -867,6 +888,9 @@ async function sendHelpEmbed(message) {
 \`${PREFIX}clearwarns @user\` — (Staff) Clear a user's warnings
 \`${PREFIX}close\` — (Staff) Close a verification channel
 \`${PREFIX}note your note\` — (Staff) Add a note to the channel
+\`${PREFIX}autoresponder add trigger | response\` — (Staff) Add an autoresponder
+\`${PREFIX}autoresponder list\` — (Staff) List autoresponders
+\`${PREFIX}autoresponder remove trigger\` — (Staff) Remove an autoresponder
 \`${PREFIX}say #channel message\` — (Staff) Make the bot send a message
 \`${PREFIX}embed #channel Title | Description\` — (Staff) Send a custom embed
 \`${PREFIX}announce #channel content | description | image/gif url | button label | button url\` — (Staff) Send an announcement with optional image/button
@@ -994,6 +1018,32 @@ function saveStickyMessages() {
     fs.writeFileSync(STICKY_MESSAGES_FILE, JSON.stringify(stickyMessages, null, 2));
   } catch (err) {
     logger.error('Failed to save sticky messages', err);
+  }
+}
+
+function loadAutoresponders() {
+  try {
+    if (fs.existsSync(AUTORESPONDERS_FILE)) {
+      return JSON.parse(fs.readFileSync(AUTORESPONDERS_FILE, 'utf8'));
+    }
+
+    fs.writeFileSync(AUTORESPONDERS_FILE, JSON.stringify([], null, 2));
+    return [];
+  } catch (err) {
+    logger.error('Failed to load autoresponders', err);
+    return [];
+  }
+}
+
+function saveAutoresponders() {
+  try {
+    fs.writeFileSync(AUTORESPONDERS_FILE, JSON.stringify(autoresponders, null, 2));
+  } catch (err) {
+    logger.error('Failed to save autoresponders', err);
+  }
+  if (supabase.saveAutoresponders) {
+    supabase.saveAutoresponders(autoresponders)
+      .catch(err => logger.error('Failed to save autoresponders to Supabase', err));
   }
 }
 
@@ -1689,6 +1739,118 @@ async function handleStickyMessageActivity(message) {
   } catch (err) {
     logger.error('Failed to post sticky message', err);
   }
+}
+
+async function handleAutoresponderCommand(message, args) {
+  if (!isStaffModerator(message, PermissionsBitField.Flags.ManageMessages)) {
+    await message.reply('You do not have permission to use this command.');
+    return;
+  }
+
+  const subcommand = args[1]?.toLowerCase();
+
+  if (subcommand === 'add') {
+    const content = message.content.slice(`${PREFIX}autoresponder add`.length).trim() || message.content.slice(`${PREFIX}ar add`.length).trim();
+    const parts = content.split('|').map(part => part.trim());
+    const trigger = parts[0]?.toLowerCase();
+    const response = parts.slice(1).join('|').trim();
+
+    if (!trigger || !response) {
+      await message.reply(`Use: \`${PREFIX}autoresponder add trigger | response\``);
+      return;
+    }
+
+    const existing = autoresponders.find(item => item.trigger === trigger);
+
+    if (existing) {
+      existing.response = response;
+      existing.updatedBy = message.author.id;
+      existing.updatedAt = new Date().toISOString();
+    } else {
+      autoresponders.push({
+        trigger,
+        response,
+        createdBy: message.author.id,
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    saveAutoresponders();
+    await message.reply(`✅ Autoresponder saved for \`${trigger}\`.`);
+    return;
+  }
+
+  if (subcommand === 'list') {
+    if (!autoresponders.length) {
+      await message.reply('No autoresponders are set up yet.');
+      return;
+    }
+
+    const lines = autoresponders.slice(0, 25).map((item, index) => {
+      const preview = item.response.length > 80 ? `${item.response.slice(0, 77)}...` : item.response;
+      return `**${index + 1}.** \`${item.trigger}\` → ${preview}`;
+    });
+
+    const embed = new EmbedBuilder()
+      .setTitle('Autoresponders')
+      .setDescription(lines.join('\n'))
+      .setColor(0xff7aa8)
+      .setTimestamp();
+
+    await message.channel.send({ embeds: [embed] });
+    return;
+  }
+
+  if (subcommand === 'remove' || subcommand === 'delete') {
+    const trigger = message.content
+      .slice(message.content.indexOf(subcommand) + subcommand.length)
+      .trim()
+      .toLowerCase();
+
+    if (!trigger) {
+      await message.reply(`Use: \`${PREFIX}autoresponder remove trigger\``);
+      return;
+    }
+
+    const oldLength = autoresponders.length;
+    autoresponders = autoresponders.filter(item => item.trigger !== trigger);
+
+    if (autoresponders.length === oldLength) {
+      await message.reply(`No autoresponder found for \`${trigger}\`.`);
+      return;
+    }
+
+    saveAutoresponders();
+    await message.reply(`✅ Removed autoresponder for \`${trigger}\`.`);
+    return;
+  }
+
+  await message.reply(
+    `Use:\n` +
+    `\`${PREFIX}autoresponder add trigger | response\`\n` +
+    `\`${PREFIX}autoresponder list\`\n` +
+    `\`${PREFIX}autoresponder remove trigger\``
+  );
+}
+
+async function handleAutoresponder(message) {
+  if (!message.guild) return;
+  if (!autoresponders.length) return;
+  if (message.content.startsWith(PREFIX)) return;
+
+  const content = message.content.trim().toLowerCase();
+  if (!content) return;
+
+  const match = autoresponders.find(item => content === item.trigger);
+  if (!match) return;
+
+  const response = match.response
+    .replaceAll('{user}', `${message.author}`)
+    .replaceAll('{user.name}', message.author.username)
+    .replaceAll('{server}', message.guild.name)
+    .replaceAll('{channel}', `${message.channel}`);
+
+  await message.channel.send(response);
 }
 
 async function sendTweetPost(message) {
